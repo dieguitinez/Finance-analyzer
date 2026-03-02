@@ -188,8 +188,9 @@ class FundamentalEngine:
             avg_compound = total_vader_score / len(entries)
             
             # Map -1.0..1.0 to 0..100 scale for QuantumBridge compatibility
-            # (score + 1) * 50
             final_score = (avg_compound + 1.0) * 50.0
+            
+            print(f"Fundamental Analysis: Found {len(news_items)} headlines for {pair_name}. Sentiment Score: {final_score:.2f}")
             
             return news_items, round(final_score, 2)
             
