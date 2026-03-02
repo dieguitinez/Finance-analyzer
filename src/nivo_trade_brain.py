@@ -140,12 +140,14 @@ class NivoTradeBrain:
         
         # Pullback en Tendencia Bajista (Short)
         elif last['Close'] < last['EMA_200']:
+            # El precio está en corrección (rally alcista temporal) si toca EMA 50
             if last['Close'] >= last['EMA_50'] * 0.999:
+                # Gatillo: RSI en zona de sobrecompra relativa
                 if last['RSI'] > 55:
                     is_pullback = True
                     pullback_type = "BEARISH PULLBACK"
                     score_short += 1.5
-                    reasons_short.append("🎯 PULLBACK: Precio en zona de recarga (Short)")
+                    reasons_short.append("🎯 PULLBACK ESTRATÉGICO: Precio en zona de RECARGA (Short)")
 
         # Symmetrical Thresholds for Nivo Partners standard execution
         self.MIN_BUY = 60

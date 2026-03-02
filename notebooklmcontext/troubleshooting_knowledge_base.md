@@ -55,13 +55,17 @@ This document records recurring issues, non-obvious failure modes, and technical
 
 ### 🌍 Fundamental Engine & Strategy Expansion
 
-#### Pullback (Retrocesos) Strategy
-- **Logic**: Operates on "discount" prices within a strong trend.
-- **Criteria**:
-    - Final Macro Direction confirmed by EMA 200.
-    - Correction detected when Price touches/crosses EMA 50.
-    - Re-entry Trigger: Bullish Pullback if RSI < 45 | Bearish Pullback if RSI > 55.
-- **Effect**: Successfully filters out entries at "expensive" overextended prices, improving R/R ratios.
+#### Pullback (Retrocesos) Strategy: Bidirectional Rigor
+- **Logic**: Operates on "discount" prices within a strong trend, treating both Longs and Shorts with equal priority.
+- **Criteria (Bullish/Long)**:
+    - Trend: Price > EMA 200.
+    - Correction: Price touches/crosses EMA 50 (Downwards).
+    - Trigger: RSI < 45.
+- **Criteria (Bearish/Short)**:
+    - Trend: Price < EMA 200.
+    - Correction: Price rallies to EMA 50 (Upwards).
+    - Trigger: RSI > 55.
+- **Messaging**: Uses "Strategic Re-entry / RECARGA" labels in logs to emphasize high-probability entry points in both directions.
 
 #### MarketPulse Integration
 - **Context**: Standard Yahoo RSS feeds can be noisy. MarketPulse (OANDA) provides higher-quality institutional commentary.
