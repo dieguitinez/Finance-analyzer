@@ -1,0 +1,7 @@
+{
+    "python.defaultInterpreterPath": "c:\\Users\\qqqq\\.gemini\\antigravity\\playground\\Finance Analyzer\\.venv\\Scripts\\python.exe",
+    "python.analysis.extraPaths": [
+        "c:\\Users\\qqqq\\.gemini\\antigravity\\playground\\Finance Analyzer\\src",
+        "c:\\Users\\qqqq\\.gemini\\antigravity\\playground\\Finance Analyzer\\quantum_engine"
+    ]
+}
