@@ -223,6 +223,18 @@ def fetch_global_scan(pair_list, tf, token, acc_id):
             results[p] = {"score": score, "signal": signal}
     return results
 
+def fetch_news_data(pair_name):
+    """ Proxies to the shared FundamentalEngine (No caching here, handled by ThreadPool result) """
+    return FundamentalEngine.get_pair_sentiment(pair_name)
+
+def fetch_seasonality_data(pair_name):
+    """ Fetches seasonality data (No caching here) """
+    df = DataEngine().fetch_data(DataEngine.get_symbol_map(pair_name), "1d", period="max")
+    if df is not None:
+        df['Return'] = df['Close'].pct_change() * 100
+        df['Month'] = df.index.month
+    return df
+
 # Main parallel executor preloading all tabs at once
 with st.spinner("⚡ Synchronizing Nivo Datasets..."):
     with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -236,17 +248,6 @@ with st.spinner("⚡ Synchronizing Nivo Datasets..."):
         s_data = f_season.result()
         global_results = f_global.result()
 
-def fetch_news_data(pair_name):
-    """ Proxies to the shared FundamentalEngine (No caching here, handled by ThreadPool result) """
-    return FundamentalEngine.get_pair_sentiment(pair_name)
-
-def fetch_seasonality_data(pair_name):
-    """ Fetches seasonality data (No caching here) """
-    df = DataEngine().fetch_data(DataEngine.get_symbol_map(pair_name), "1d", period="max")
-    if df is not None:
-        df['Return'] = df['Close'].pct_change() * 100
-        df['Month'] = df.index.month
-    return df
 
 # Top Navigation
 c1, c2 = st.columns([0.8, 0.2])
