@@ -20,7 +20,7 @@ from src.notifications import NotificationManager
 from src.data_engine import DataEngine, FundamentalEngine
 from quantum_engine.quantum_bridge import QuantumBridge
 from quantum_engine.risk_manager import CapitalGuardian
-from src.nivo_cortex import CortexClass, MarketRegimeDetector
+from src.nivo_cortex import NivoCortex, MarketRegimeDetector
 
 # Import availability flags for Lite Mode detection
 try:
@@ -610,3 +610,6 @@ if st.session_state.lang == "ES":
     st.caption("⚠️ **Aviso Legal:** Nivo FX es una plataforma con fines puramente experimentales y didácticos.")
 else:
     st.caption("⚠️ **Disclaimer:** Nivo FX is a platform strictly for experimental and educational purposes.")
+
+# CortexClass alias for backward compatibility (defined at the end to avoid forward reference NameError)
+CortexClass = NivoCortex

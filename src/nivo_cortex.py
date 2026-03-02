@@ -26,7 +26,6 @@ import gc
 
 # Ensure flags are globally accessible for Lite Mode detection
 __all__ = ['NivoCortex', 'MarketRegimeDetector', 'TORCH_AVAILABLE', 'HMM_AVAILABLE']
-CortexClass = NivoCortex # Alias for compatibility
 
 # Suppress standard convergence warnings for cleaner console output
 warnings.filterwarnings("ignore")
