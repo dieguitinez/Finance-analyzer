@@ -123,9 +123,11 @@ class NivoTradeBrain:
             reasons_long.append("✅ Strong Trend Strength (ADX > 25)")
             reasons_short.append("✅ Strong Trend Strength (ADX > 25)")
 
-        # Thresholds for Nivo Partners standard execution
-        self.MIN_SCORE = 60
-        self.STRONG_SCORE = 85
+        # Symmetrical Thresholds for Nivo Partners standard execution
+        self.MIN_BUY = 60
+        self.STRONG_BUY = 85
+        self.MAX_SELL = 40
+        self.STRONG_SELL = 15
 
         is_long = score_long >= score_short
         # Directional Score: 50 is neutral. 
@@ -138,8 +140,14 @@ class NivoTradeBrain:
         reasons = reasons_long if is_long else reasons_short
         
         signal = "WAIT"
-        if final_score >= self.STRONG_SCORE: signal = "STRONG BUY" if is_long else "STRONG SELL"
-        elif final_score >= self.MIN_SCORE: signal = "BUY" if is_long else "SELL"
+        if final_score >= self.STRONG_BUY: 
+            signal = "STRONG BUY"
+        elif final_score >= self.MIN_BUY: 
+            signal = "BUY"
+        elif final_score <= self.STRONG_SELL: 
+            signal = "STRONG SELL"
+        elif final_score <= self.MAX_SELL: 
+            signal = "SELL"
         
         return {
             "score": final_score,

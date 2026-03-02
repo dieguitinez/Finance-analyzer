@@ -60,6 +60,7 @@ class NivoTelegramBot:
                 "🔹 /oanda - Link a OANDA Hub\n"
                 "🔹 /help - Mostrar este mensaje\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
+                "<i>Actualizado: 2026-03-02 15:00</i>\n"
                 "<i>Nivo Partners Institutional Suite</i>"
             )
             self.send_message(help_text)

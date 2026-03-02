@@ -153,15 +153,23 @@ class FundamentalEngine:
         """
         analyzer = SentimentIntensityAnalyzer()
         symbol = DataEngine.get_symbol_map(pair_name)
-        rss_url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US"
+        # Combine Yahoo Finance and MarketPulse (OANDA) for higher quality
+        rss_urls = [
+            f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US",
+            "https://www.marketpulse.com/feed/"
+        ]
         
         try:
-            feed = feedparser.parse(rss_url)
+            all_entries = []
+            for rss_url in rss_urls:
+                feed = feedparser.parse(rss_url)
+                all_entries.extend(feed.entries)
+            
             news_items = []
             total_vader_score = 0
             
-            # Use max 10 recent headlines
-            entries = feed.entries[:10]
+            # Use max 20 recent headlines (Expanded from 10 + MarketPulse)
+            entries = all_entries[:20]
             if not entries:
                 return [], 50.0  # Neutral fallback
                 

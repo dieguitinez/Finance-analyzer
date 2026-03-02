@@ -70,6 +70,7 @@ find $RemotePath -name "*.sh" -exec sed -i 's/\r$//' {} +
 echo '---- Restarting Services ----'
 sudo systemctl restart nivo-dashboard.service
 sudo systemctl restart nivo-sentinel.service
+sudo systemctl restart nivo-bot.service
 echo '---- Deployment Unpacked and Services Restarted Successfully ----'
 "@
 
