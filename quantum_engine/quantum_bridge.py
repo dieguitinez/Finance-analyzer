@@ -88,8 +88,10 @@ class QuantumBridge:
                 # Low vol: neutral
                 q_multiplier = 1.0
             
-            # --- 4. Optimal Position Size ---
-            position_size = float(np.clip(q_multiplier * bull_prob * 2, 0.25, 2.0))
+            # --- 4. Optimal Position Size (Symmetric Conviction) ---
+            # Distance from 0.5 (Neutral) represents conviction regardless of direction
+            conviction = abs(bull_prob - 0.5) * 2.0
+            position_size = float(np.clip(q_multiplier * (1.0 + conviction), 0.25, 2.0))
             
             result = {
                 'quantum_multiplier': round(float(q_multiplier), 4),
@@ -126,53 +128,41 @@ class QuantumBridge:
     def calculate_nivo_q_score(self, legacy_tech_score: float, legacy_fund_score: float, 
                              q_regime_state: int, q_forecast_delta: float, q_position_weight: float) -> float:
         """
-        Merges input scores mathematically to return the final_nivo_q_score.
-        Implements Soros 'Reflexivity' via a convergence multiplier.
-        
-        Args:
-            legacy_tech_score (float): Technical analysis score (0-100).
-            legacy_fund_score (float): Fundamental sentiment score (0-100).
-            q_regime_state (int): HMM state (0=ranging, 1=trending).
-            q_forecast_delta (float): LSTM bull probability (0-100).
-            q_position_weight (float): Risk-based leverage multiplier.
-            
-        Returns:
-            float: The finalized blend score (0-100).
+        Merges input scores using Symmetric Differential Math (Distance from 50).
+        Ensures both LONG and SHORT signals are amplified equally.
         """
-        # --- 1. Base Classical Blend ---
-        base_classical = (legacy_tech_score * 0.6) + (legacy_fund_score * 0.4)
+        # --- 1. Base Classical Differential ---
+        tech_diff = legacy_tech_score - 50.0
+        fund_diff = legacy_fund_score - 50.0
+        base_diff = (tech_diff * 0.6) + (fund_diff * 0.4)
         
         # --- 2. Soros Reflexivity Multiplier ---
-        # Neutral zone is around 50. We look for alignment or divergence.
         reflex_mult = 1.0
+        is_bull = base_diff > 5.0
+        is_bear = base_diff < -5.0
         
-        is_tech_bull = legacy_tech_score > 55
-        is_tech_bear = legacy_tech_score < 45
-        is_fund_bull = legacy_fund_score > 55
-        is_fund_bear = legacy_fund_score < 45
-
-        if (is_tech_bull and is_fund_bull) or (is_tech_bear and is_fund_bear):
-            # Synergistic Reflexivity (Feedback Loop)
-            reflex_mult = 1.25
-        elif (is_tech_bull and is_fund_bear) or (is_tech_bear and is_fund_bull):
-            # Market Friction (Divergence)
-            reflex_mult = 0.75
+        # If technicals and fundamentals align in the same direction
+        if (tech_diff > 5 and fund_diff > 5) or (tech_diff < -5 and fund_diff < -5):
+            reflex_mult = 1.3  # Boost conviction on alignment
+        elif (tech_diff * fund_diff) < 0:
+            reflex_mult = 0.7  # Dampen conviction on divergence
             
         # --- 3. Quantum Phase Integration ---
+        q_diff = q_forecast_delta - 50.0
         if q_regime_state == 0:
-            # Ranging: protect capital, lower delta weight
-            adjusted_delta = q_forecast_delta * 0.2
-            base_classical *= 0.9 # Extra dampening for ranging noise
+            # Ranging: dampen quantum forecast to protect against noise
+            q_impact = q_diff * 0.2
+            base_diff *= 0.8
         else:
-            # Trending: allocate more weight to quantum forecasts
-            adjusted_delta = q_forecast_delta * 0.6
+            # Trending: boost quantum impact
+            q_impact = q_diff * 0.7
             
-        # --- 4. Final Aggregation & Mapping ---
-        # (Classical + Quantum) * Position Weight * Reflexivity Multiplier
-        raw_final = (base_classical + adjusted_delta) * q_position_weight * reflex_mult
+        # --- 4. Final Aggregation & Weighting ---
+        final_diff = (base_diff + q_impact) * q_position_weight * reflex_mult
         
-        # Normalize into 0-100 boundary
-        return float(np.clip(raw_final, 0.0, 100.0))
+        # Map back to 0-100 range (50 is neutral)
+        final_score = 50.0 + final_diff
+        return float(np.clip(final_score, 0.0, 100.0))
 
     def plot_bridge_convergence(self, history_df: pd.DataFrame, lang: str = "en") -> go.Figure:
         """

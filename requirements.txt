@@ -3,7 +3,6 @@ yfinance>=0.2.51
 pandas
 numpy
 plotly
-matplotlib
 feedparser
 vaderSentiment
 twilio
@@ -11,7 +10,4 @@ v20
 oandapyV20
 google-genai
 PyYAML
-# hmmlearn
-torch
-scikit-learn
 requests

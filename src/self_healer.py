@@ -58,7 +58,7 @@ class NivoSelfHealer:
             """
             
             # Resilient model cascade
-            model_cascade = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash']
+            model_cascade = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-lite']
             
             response_text = None
             for model_name in model_cascade:

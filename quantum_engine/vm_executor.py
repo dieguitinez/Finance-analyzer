@@ -78,7 +78,11 @@ def execute_oanda_safe_trade(instrument: str, units: int, action: str, stop_loss
             )
         return True
     else:
-        logger.error(f"❌ Execution failed: {result.get('message')}")
+        msg = result.get('message', 'Unknown Error')
+        if "Already have an open position" in msg:
+            logger.info(f"⏭️  {msg} - Skipping entry.")
+        else:
+            logger.error(f"❌ Execution failed: {msg}")
         return False
 
 def run_headless_cycle():
@@ -137,15 +141,21 @@ def run_headless_cycle():
             q_position_weight=q_res.get('optimal_position_size', 1.0)
         )
         
-        # Retrieve SL and TS from technical brain, adding an execution buffer to prevent spread rejection
-        base_sl_price = brain_analysis.get("stop_loss", df['Close'].iloc[-1] * 0.99)
-        atr_value = df['High'].iloc[-14:].mean() - df['Low'].iloc[-14:].mean() # Simple proxy if brain fails
-        ts_distance = brain_analysis.get("atr", atr_value) * 1.5
-        
-        # Protective Buffer: Push SL an extra 0.5 ATR away to survive OANDA spread volatility
-        execution_buffer = atr_value * 0.5
+        # 4. Final Directional Decision
         is_long_signal = final_score > 50
-        sl_price = base_sl_price - execution_buffer if is_long_signal else base_sl_price + execution_buffer
+        
+        # Recalculate Stop Loss based on the ACTUAL final direction to ensure security
+        # We use a 2.0 ATR stop for institutional safety, plus the execution buffer
+        atr_value = df['High'].iloc[-14:].mean() - df['Low'].iloc[-14:].mean()
+        execution_buffer = atr_value * 0.5
+        current_price = df['Close'].iloc[-1]
+        
+        if is_long_signal:
+            sl_price = current_price - (atr_value * 2.0) - execution_buffer
+        else:
+            sl_price = current_price + (atr_value * 2.0) + execution_buffer
+            
+        ts_distance = atr_value * 1.5
         
         # 4. Guardian Risk Sandbox Filtering
         current_pnl = 0.0 # TODO: In production, query the actual live OANDA Account PnL ratio
@@ -161,20 +171,93 @@ def run_headless_cycle():
         logger.info(f"Quantum Phase Complete. Guardian Output: {guardian_msg}")
         logger.info(f"Bridge Decision >> Signal: {final_signal} | Q-Multiplier: {capped_weight:.2f}x | Final Score: {final_score:.2f}")
 
-        # --- Alerta Telegram: SOLO si hay senal real (BUY o SELL) ---
+        # ---------------------------------------------------------------
+        # 4. Smart Execution Strategy (Execution + Notification)
+        # ---------------------------------------------------------------
         tg_token  = os.getenv("TELEGRAM_BOT_TOKEN", "")
         tg_chat   = os.getenv("TELEGRAM_CHAT_ID", "")
-        if tg_token and tg_chat and final_signal in ("BUY", "SELL"):
-            NotificationManager.trade_signal_alert(
-                pair=pair,
-                signal=final_signal,
-                score=final_score,
-                weight=capped_weight,
-                direction=q_res.get('qlstm_bull_prob', 0.5),
-                guardian_msg=guardian_msg,
-                token=tg_token,
-                chat_id=tg_chat
+        oanda_env = os.getenv("OANDA_ENVIRONMENT", "practice")
+        
+        trader = NivoAutoTrader(
+            os.getenv("OANDA_ACCESS_TOKEN"), 
+            os.getenv("OANDA_ACCOUNT_ID"),
+            environment=oanda_env
+        )
+        
+        # Check Account for Open Positions BEFORE any signal alerts
+        performance = trader.get_position_performance(oanda_symbol)
+        
+        if performance:
+            logger.info(f"⏭️ Sincronización: Posición detectada para {oanda_symbol}. Verificando Step-Trailing...")
+            
+            # --- STEP TRAILING: Asegurar ganancias cada 20 pips ---
+            trader.update_step_trailing(
+                instrument=oanda_symbol,
+                trade_id=performance.get('trade_id'),
+                entry_price=performance.get('entry_price'),
+                current_sl=performance.get('sl_price', 0),
+                units=performance.get('units', 0),
+                current_pips=performance.get('pips', 0)
             )
+            
+            # Re-fetch performance to show updated SL and Insured Pips in report
+            performance = trader.get_position_performance(oanda_symbol) or performance
+
+            # SILENT MODE: Solo enviamos reporte si hay un cambio significativo
+            # (Ej: Se aseguró ganancia con el Step-Trailing)
+            last_insured = float(os.getenv(f"LAST_INSURED_{oanda_symbol}", "0.0"))
+            current_insured = performance.get('insured_pips', 0.0)
+            
+            should_notify = False
+            if current_insured > last_insured:
+                logger.info(f"🎯 Milestone: Ganancia asegurada aumentada a +{current_insured} pips. Notificando...")
+                should_notify = True
+                # Guardar el nuevo hito (esto es volátil por proceso, pero ayuda en ráfagas)
+                os.environ[f"LAST_INSURED_{oanda_symbol}"] = str(current_insured)
+
+            if tg_token and tg_chat and should_notify:
+                NotificationManager.position_performance_report(
+                    pair=pair,
+                    units=performance['units'],
+                    entry_price=performance['entry_price'],
+                    current_price=performance['current_price'],
+                    exit_price=performance.get('exit_price', 0.0),
+                    sl_price=performance.get('sl_price', 0.0),
+                    insured_pips=performance.get('insured_pips', 0.0),
+                    pips=performance['pips'],
+                    pnl_usd=performance['pnl_usd'],
+                    token=tg_token,
+                    chat_id=tg_chat
+                )
+            final_signal = "WAIT" # Detener lógica de entrada
+        else:
+            logger.info(f"🔍 No se detectaron posiciones abiertas para {oanda_symbol}. Evaluando señales de entrada...")
+            # No hay posicion - Procedemos con la Evaluacion de Entrada
+            current_pnl = 0.0 
+            raw_signal = "BUY" if final_score > 65.0 else "SELL" if final_score < 35.0 else "WAIT"
+            
+            final_signal, capped_weight, guardian_msg = guardian.evaluate_trade(
+                raw_signal=raw_signal,
+                q_position_weight=q_res.get('optimal_position_size', 1.0),
+                current_daily_pnl_pct=current_pnl,
+                lang="en"
+            )
+            
+            logger.info(f"Quantum Phase Complete. Guardian Output: {guardian_msg}")
+            logger.info(f"Bridge Decision >> Signal: {final_signal} | Q-Multiplier: {capped_weight:.2f}x | Final Score: {final_score:.2f}")
+
+            # Alerta Telegram: Solo para entradas nuevas
+            if tg_token and tg_chat and final_signal in ("BUY", "SELL"):
+                NotificationManager.trade_signal_alert(
+                    pair=pair,
+                    signal=final_signal,
+                    score=final_score,
+                    weight=capped_weight,
+                    direction=q_res.get('qlstm_bull_prob', 0.5),
+                    guardian_msg=guardian_msg,
+                    token=tg_token,
+                    chat_id=tg_chat
+                )
         # ---------------------------------------------------------------
 
     except Exception as e:
@@ -193,33 +276,31 @@ def run_headless_cycle():
         final_signal = "HOLD"  # Fail safe
 
     finally:
-        # 5. Strict Memory Management for 1GB Micro-VM
-        # This MUST occur before the HTTPS Broker Dispatch request is initialized to free up local sockets.
+        # 5. Strict Memory Management
         logger.info("Executing Aggressive Memory Flush...")
         if 'df' in locals(): del df
         if 'q_bridge' in locals(): del q_bridge
         if 'guardian' in locals(): del guardian
         if 'prices' in locals(): del prices
-        
-        # Hard system ram flush
         gc.collect()
         logger.info("VM Memory Buffer Cleared successfully.")
 
-    # 6. Broker Connection Route (Executes AFTER math overhead drops out of RAM)
-    if "HOLD" not in final_signal and "CANCEL" not in final_signal and final_signal != "WAIT":
-        logger.info("Initiating Live Broker HTTPS Dispatch Protocol (Safe Route)...")
-        # 10,000 unit baseline proxy 
-        trade_units = int(10000 * capped_weight)
+    # 6. Broker Connection Route
+    # We only call this if final_signal is BUY/SELL and NO position was detected above
+    if final_signal in ("BUY", "SELL"):
+        logger.info(f"Initiating Live Broker HTTPS Dispatch Protocol (Safe Route) for {final_signal}...")
+        # OANDA v20 Protocol: Positive units for LONG, Negative for SHORT
+        units_base = int(10000 * (capped_weight if 'capped_weight' in locals() else 1.0))
+        trade_units = units_base if final_signal == "BUY" else -abs(units_base)
         
-        execute_oanda_safe_trade(
+        trader.execute_trade(
             instrument=oanda_symbol, 
             units=trade_units, 
-            action=final_signal,
-            stop_loss=sl_price,
-            trailing_stop=ts_distance
+            stop_loss_price=sl_price,
+            trailing_stop_distance=ts_distance
         )
     else:
-        logger.info("Metrics do not align for Live routing. Session Closed.")
+        logger.info("Metrics do not align for Live routing or Position already open. Session Closed.")
 
 if __name__ == "__main__":
     run_headless_cycle()

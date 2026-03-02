@@ -69,8 +69,26 @@ Because the Windows machine is sandboxed, direct `git push` often fails.
 2.  **Repo Weight**: The repository must stay under **1MB**. If a push fails with "Large files detected," do NOT use Git LFS. Instead, run `git rm -r --cached .venv` followed by a fresh commit.
 3.  **Branch Name**: Always use `main`. If a push fails with `refspec main does not match any`, rename the current branch using `git branch -m main`.
 
-## 🤖 Directives for the Next Agent
-1.  **Do NOT touch the `round()` or mathematical precision variables in `auto_execution.py`.** The logic (`decimals = 3 if "JPY" in instrument else 5`) is mathematically perfect for OANDA V20.
-2.  If the user asks to modify risk parameters, do it in `nivo_trade_brain.py` (e.g., changing SL from 1.5 ATR to 2.0 ATR), but NEVER modify the 0.5 ATR buffer in `vm_executor.py`.
-3.  **Deployment Protocol**: Always use `.\deploy_to_linux.ps1` for the headless Ubuntu VM. Ensure `git push origin main` is successful before looking at the Streamlit web dashboard.
-4.  **Zero-Heavy-Entry Policy**: If you add new files, ensure they are not binaries or library folders. Use `requirements.txt` for all dependencies.
+## 🛠️ Critical Bug Fixes: SDK & Data Integrity (March 2, 2026)
+
+### 1. Gemini SDK Migration (google-genai)
+- **The Shift**: The system now uses the new `google-genai` SDK. All AI interactions (Kai FX and Self-Healer) go through `genai.Client`.
+- **Quota Protection (Model Cascade)**: To avoid "Resource Exhausted" errors on the free tier, the system employs a model cascade logic. If `gemini-2.0-flash` hits a limit, it immediately tries `gemini-1.5-flash` or `gemini-2.0-flash-lite`. This multiples the total daily request capacity.
+
+### 2. OANDA Live vs. Practice Dynamic Host
+- **Logic**: `src/nivo_cortex.py` now uses a dynamic URL constructor.
+- **Targeting**: It automatically selects `api-fxpractice.oanda.com` or `api-fxtrade.oanda.com` based on the provided `OANDA_ACCOUNT_ID`. Ensure the account ID is passed during initialization.
+
+### 3. Yahoo Finance (`yfinance`) Stability
+- **Requirement**: `yfinance` MUST be version `0.2.51` or higher to prevent `EURUSD=X` download failures on Linux environments.
+
+## 💾 Infrastructure & Maintenance
+- **Environment**: All critical keys (`OANDA`, `TELEGRAM`, `GOOGLE_API_KEY`) must reside in the server's `.env`.
+- **Dashboard Deployment**: Synchronize via `git push origin main`.
+- **HMM Fallback**: If `hmmlearn` fails to install due to C++ Build Tools, `src/nivo_cortex.py` uses a mock class to allow the resto of the system to run without the "Market Regime" feature.
+
+## 🤖 Directives for the Next Agent (Updated)
+1.  **Do NOT revert to `google-generativeai`.** The migration to `google-genai` is complete and verified.
+2.  **Model Selection (Verified 2026)**: Use the `model_cascade` pattern. Prioritize **`gemini-2.5-flash`** for intelligence and **`gemini-2.5-flash-lite`** for high-volume cycles (~1,000 RPD). `gemini-1.5-flash` is considered legacy/restricted and should be avoided.
+3.  **HMM Detection**: If the user wants the "Market Regime" feature back, verify C++ Build Tools availability before uncommenting `hmmlearn` in `requirements.txt`.
+4.  **Server Recovery**: If `ImportError: google.genai` occurs on server, perform a clean `pip uninstall` and `install` inside the `.venv` to clear the namespace.

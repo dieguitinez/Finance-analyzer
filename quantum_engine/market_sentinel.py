@@ -109,6 +109,29 @@ def check_volatility_expansion(pair="EUR_USD", tf="M5", threshold_bps=15.0):
         logger.error(f"Unexpected error establishing trigger condition: {e}")
         return False
 
+def get_active_positions():
+    """Fetches all instruments that currently have an open position in OANDA."""
+    oanda_token = os.getenv("OANDA_ACCESS_TOKEN", "")
+    oanda_account = os.getenv("OANDA_ACCOUNT_ID", "")
+    base_url = os.getenv("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
+    
+    if not oanda_token or not oanda_account:
+        return []
+        
+    url = f"{base_url}/v3/accounts/{oanda_account}/openPositions"
+    headers = {"Authorization": f"Bearer {oanda_token}"}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            positions = data.get("positions", [])
+            # Return list of instruments like ['USD_CHF', 'USD_JPY']
+            return [p["instrument"] for p in positions]
+    except Exception as e:
+        logger.error(f"Error checking active positions for Sentinel: {e}")
+    return []
+
 def awake_vm_executor(pair: str):
     """
     Triggers the heavy Python process (vm_executor.py) via subprocess isolation.
@@ -182,6 +205,14 @@ def run_sentinel():
     for pair in watchlist:
         if check_volatility_expansion(pair=pair):
             triggered_pairs.append(pair)
+            
+    # --- NEW: Automated Tracking of Open Positions ---
+    # We ensure that if there's a trade open, it always gets a report regardless of volatility
+    active_positions = get_active_positions()
+    for pos_pair in active_positions:
+        if pos_pair not in triggered_pairs:
+            logger.info(f"📋 Seguimiento Automático: Posición abierta detectada para {pos_pair}. Activando reporte.")
+            triggered_pairs.append(pos_pair)
             
     # 3. Process Branching
     if triggered_pairs:

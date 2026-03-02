@@ -79,14 +79,14 @@ class NotificationManager:
         direction: Porcentaje alcista (0.0 a 1.0)
         """
         if 'BUY' in signal or 'BUY' in str(signal).upper():
-            icon = '\U0001f7e2'  # verde
-            dir_text = 'COMPRA (AL ALZA)'
+            icon = '🟢'  # verde
+            dir_text = '📈 COMPRA / LONG (AL ALZA)'
         elif 'SELL' in signal or 'SELL' in str(signal).upper():
-            icon = '\U0001f534'  # rojo
-            dir_text = 'VENTA (A LA BAJA)'
+            icon = '🔴'  # rojo
+            dir_text = '📉 VENTA / SHORT (A LA BAJA)'
         else:
-            icon = '\U0001f7e1'  # amarillo
-            dir_text = 'ESPERAR (SIN POSICION)'
+            icon = '🟡'  # amarillo
+            dir_text = '⏳ ESPERAR (SIN POSICIÓN)'
 
         dir_pct = direction * 100 if isinstance(direction, float) and direction <= 1.0 else direction
         score_bar = '\u2588' * int(score / 10) + '\u2591' * (10 - int(score / 10))
@@ -97,16 +97,14 @@ class NotificationManager:
         oanda_line = "\n📲 OANDA: https://trade.oanda.com/"
 
         msg = (
-            f"{icon} SENAL NIVO FX - {pair}\n"
-            f"{'='*30}\n"
-            f"Direccion:   {dir_text}\n"
-            f"Score:       {score:.1f}/100\n"
-            f"             [{score_bar}]\n"
-            f"Peso:        {weight:.2f}x apalancamiento\n"
-            f"Prob. Alcista: {dir_pct:.1f}%\n"
-            f"Guardian:    {guardian_msg}\n"
-            f"{'='*30}\n"
-            f"Senyal Final: {signal}"
+            f"{icon} <b>NIVO QUANTUM SIGNAL - {pair}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📡 <b>Decisión:</b> {dir_text}\n"
+            f"🔥 <b>Intensidad:</b> {score_bar} ({score:.1f}%)\n"
+            f"🎯 <b>Confianza AI:</b> {dir_pct:.1f}%\n"
+            f"⚖️ <b>Apancalamiento:</b> {weight:.2f}x\n"
+            f"🛡️ <b>Guardian:</b> {guardian_msg}\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
             f"{dashboard_line}"
             f"{oanda_line}"
         )
@@ -149,6 +147,43 @@ class NotificationManager:
             # Añadir un tag para que el canal sepa que es un broadcast auditado
             broadcast_msg = f"{full_message}\n\n<i>(Nivo FX Automated Broadcast)</i>"
             NotificationManager.send_telegram(broadcast_msg, token, broadcast_chat_id)
+
+    @staticmethod
+    def position_performance_report(pair, units, entry_price, current_price, exit_price, sl_price, insured_pips, pips, pnl_usd, token, chat_id):
+        """
+        Informa sobre el rendimiento de una posicion abierta en tiempo real.
+        """
+        icon = '\ud83d\udcc8' if pips >= 0 else '\ud83d\udcc9'
+        trend_icon = '\U0001f4c8' if pips >= 0 else '\U0001f4c9'
+        
+        oanda_link = "https://trade.oanda.com/"
+        
+        exit_line = f"🚪 <b>Estim. Salida:</b> {exit_price:.5f} (TS)\n" if exit_price > 0 else ""
+        sl_line = f"🛡️ <b>Stop Loss:</b> {sl_price:.5f}\n" if sl_price > 0 else ""
+        
+        # Highlight if protected (Break-even or better)
+        is_protected = False
+        if units > 0 and sl_price >= entry_price: is_protected = True
+        if units < 0 and sl_price > 0 and sl_price <= entry_price: is_protected = True
+        
+        guard_msg = f" ✅ <b>SECURED: +{insured_pips:.1f} PIPS</b>" if insured_pips > 0 else " 🛡️ <b>BREAK-EVEN</b>" if is_protected else ""
+        
+        msg = (
+            f"{icon} <b>SEGUIMIENTO - {pair}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📌 <b>Estado:</b> ABIERTA {trend_icon}{guard_msg}\n"
+            f"🏗️ <b>Operación:</b> {'📈 COMPRA / LONG' if float(units) > 0 else '📉 VENTA / SHORT'}\n"
+            f"🏁 <b>Entrada:</b> {entry_price:.5f}\n"
+            f"💹 <b>Precio Actual:</b> {current_price:.5f}\n"
+            f"{sl_line}"
+            f"{exit_line}"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📈 <b>Pips:</b> {pips:+.1f} pips\n"
+            f"💵 <b>Beneficio:</b> ${pnl_usd:+.2f} USD\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📲 <a href='{oanda_link}'>Gestionar en OANDA</a>"
+        )
+        return NotificationManager.send_telegram(msg, token, chat_id)
 
     @staticmethod
     def trade_execution_report(pair, action, units, order_id, token, chat_id):
