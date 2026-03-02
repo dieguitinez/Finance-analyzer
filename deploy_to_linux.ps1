@@ -65,7 +65,12 @@ $RemoteCommands = @"
 mkdir -p $RemotePath
 tar -xzf $ArchiveName -C $RemotePath
 rm -f $ArchiveName
-echo '---- Deployment Unpacked Successfully ----'
+# Fix Windows line endings in shell scripts
+find $RemotePath -name "*.sh" -exec sed -i 's/\r$//' {} +
+echo '---- Restarting Services ----'
+sudo systemctl restart nivo-dashboard.service
+sudo systemctl restart nivo-sentinel.service
+echo '---- Deployment Unpacked and Services Restarted Successfully ----'
 "@
 
 # Fix line endings (\r\n -> \n) for Linux compatibility

@@ -17,6 +17,7 @@ import subprocess
 import requests
 import logging
 from dotenv import load_dotenv
+from v20 import Context
 
 load_dotenv()
 
@@ -181,6 +182,35 @@ def handle_command(text):
         kill_switch = get_kill_switch()
         trading_status = "BLOQUEADO 🛑 (Kill Switch)" if kill_switch else "AUTONOMO ACTIVO ✅"
         
+        # Consultar Posiciones en OANDA
+        pos_msg = "\n📂 POSICIONES ABIERTAS (OANDA):"
+        try:
+            oanda_token = os.getenv("OANDA_ACCESS_TOKEN", "")
+            oanda_account = os.getenv("OANDA_ACCOUNT_ID", "")
+            oanda_env = os.getenv("OANDA_ENVIRONMENT", "practice")
+            
+            if oanda_token and oanda_account:
+                hostname = "api-fxpractice.oanda.com" if oanda_env == "practice" else "api-fxtrade.oanda.com"
+                ctx = Context(hostname, 443, ssl=True, token=oanda_token)
+                resp = ctx.position.list_open(oanda_account)
+                positions = resp.get("positions", 200)
+                
+                if positions:
+                    for p in positions:
+                        # Determinar si es Long o Short
+                        long_units = float(p.long.units)
+                        short_units = float(p.short.units)
+                        if long_units != 0:
+                            pos_msg += f"\n- {p.instrument}: COMPRA ({long_units} un.)"
+                        elif short_units != 0:
+                            pos_msg += f"\n- {p.instrument}: VENTA ({abs(short_units)} un.)"
+                else:
+                    pos_msg += "\n(Sin posiciones abiertas)"
+            else:
+                pos_msg += "\n⚠️ OANDA API no configurada"
+        except Exception as e:
+            pos_msg += f"\n⚠️ Error al consultar OANDA: {str(e)}"
+
         msg = (
             f"📊 ESTADO DEL SENTINEL\n"
             f"{'='*28}\n"
@@ -188,6 +218,7 @@ def handle_command(text):
             f"Divisas: {pares_str}\n"
             f"Memoria: Optimizada (1GB RAM)\n"
             f"Trading: {trading_status}\n"
+            f"{pos_msg}\n"
             f"{db_line}"
         )
         send_message(msg)

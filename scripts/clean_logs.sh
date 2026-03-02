@@ -6,9 +6,9 @@ echo "============================================="
 echo " Nivo FX - Linux Maintenance & Disk Cleanup"
 echo "============================================="
 
-# 1. Systemd Journal Vacuuming (Limit logs to 7 days or 500MB)
+# 1. Systemd Journal Vacuuming (Limit logs to 3 days or 500MB)
 echo "[1/3] Vacuuming systemd journals..."
-sudo journalctl --vacuum-time=7d
+sudo journalctl --vacuum-time=3d
 sudo journalctl --vacuum-size=500M
 
 # 2. Project Cache Cleanup

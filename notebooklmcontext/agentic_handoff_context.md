@@ -64,7 +64,13 @@ Because the Windows machine is sandboxed, direct `git push` often fails.
 - **The Fix**: The local files in `src/` and `quantum_engine/` are the **Ground Truth**.
 - **The Command**: Use `git push origin main --force` to sync the local fixed OANDA logic with the Streamlit Cloud web dashboard.
 
+## ⚠️ CRITICAL DEPLOYMENT SAFEGUARDS
+1.  **NO `.venv` UPLOADS**: The virtual environment folder (`.venv`) exceeds 250MB and violates GitHub's 100MB file limit. It MUST be excluded via `.gitignore`.
+2.  **Repo Weight**: The repository must stay under **1MB**. If a push fails with "Large files detected," do NOT use Git LFS. Instead, run `git rm -r --cached .venv` followed by a fresh commit.
+3.  **Branch Name**: Always use `main`. If a push fails with `refspec main does not match any`, rename the current branch using `git branch -m main`.
+
 ## 🤖 Directives for the Next Agent
 1.  **Do NOT touch the `round()` or mathematical precision variables in `auto_execution.py`.** The logic (`decimals = 3 if "JPY" in instrument else 5`) is mathematically perfect for OANDA V20.
 2.  If the user asks to modify risk parameters, do it in `nivo_trade_brain.py` (e.g., changing SL from 1.5 ATR to 2.0 ATR), but NEVER modify the 0.5 ATR buffer in `vm_executor.py`.
 3.  **Deployment Protocol**: Always use `.\deploy_to_linux.ps1` for the headless Ubuntu VM. Ensure `git push origin main` is successful before looking at the Streamlit web dashboard.
+4.  **Zero-Heavy-Entry Policy**: If you add new files, ensure they are not binaries or library folders. Use `requirements.txt` for all dependencies.

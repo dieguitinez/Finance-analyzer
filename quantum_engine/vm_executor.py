@@ -179,10 +179,17 @@ def run_headless_cycle():
 
     except Exception as e:
         logger.error(f"Mathematical Generation Error: {str(e)}", exc_info=True)
-        tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        tg_chat  = os.getenv("TELEGRAM_CHAT_ID", "")
-        if tg_token and tg_chat:
-            NotificationManager.telegram_alert('error', f"Error en el motor cuantico:\n{str(e)}", tg_token, tg_chat)
+        from src.self_healer import NivoSelfHealer
+        try:
+            NivoSelfHealer.diagnose_and_alert(
+                component="QuantumCore.VMExecutor",
+                error_msg=f"Excepción severa en el ciclo del motor.",
+                exception_obj=e,
+                context_data={"pair": pair if 'pair' in locals() else "Unknown"}
+            )
+        except Exception as alert_e:
+            logger.error(f"Failed to send diagnostic alert: {alert_e}")
+            
         final_signal = "HOLD"  # Fail safe
 
     finally:

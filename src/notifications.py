@@ -113,6 +113,44 @@ class NotificationManager:
         return NotificationManager.send_telegram(msg, token, chat_id)
 
     @staticmethod
+    def broadcast_message(message, level, token, chat_id):
+        """
+        Envía un mensaje a un chat principal y opcionalmente a un canal de broadcast.
+        Permite categorizar el mensaje con un 'level' para un encabezado predefinido.
+        
+        Args:
+            message (str): El cuerpo del mensaje a enviar.
+            level (str): Categoría del mensaje ('info', 'warning', 'error', 'trade').
+            token (str): Token del bot de Telegram.
+            chat_id (str): ID del chat principal (administrador).
+            
+        Pasos:
+        1. Determinar el encabezado basado en el nivel.
+        2. Formatear el mensaje completo.
+        3. Generar mensaje consolidado
+        4. Opcional: Enviar también a un canal de solo lectura (Broadcast Channel)
+        """
+        import os
+        header = {
+            'info': "ℹ️ <b>INFO</b>",
+            'warning': "⚠️ <b>ADVERTENCIA</b>",
+            'error': "🚨 <b>ERROR CRÍTICO</b>",
+            'trade': "📊 <b>TRADE EJECUTADO</b>"
+        }.get(level, "🔔 <b>NOTIFICACIÓN</b>")
+        
+        full_message = f"{header}\n───────────────────\n{message}"
+        
+        # Enviar al chat principal del administrador
+        NotificationManager.send_telegram(full_message, token, chat_id)
+        
+        # Enviar copia al canal de broadcast (solo lectura) si existe
+        broadcast_chat_id = os.getenv("TELEGRAM_BROADCAST_CHAT_ID")
+        if broadcast_chat_id and str(broadcast_chat_id).strip() != "":
+            # Añadir un tag para que el canal sepa que es un broadcast auditado
+            broadcast_msg = f"{full_message}\n\n<i>(Nivo FX Automated Broadcast)</i>"
+            NotificationManager.send_telegram(broadcast_msg, token, broadcast_chat_id)
+
+    @staticmethod
     def trade_execution_report(pair, action, units, order_id, token, chat_id):
         """
         Confirma la ejecucion real en el broker con el ID de transaccion.

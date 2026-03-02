@@ -8,6 +8,13 @@ import feedparser
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import datetime
 import time
+import os
+import warnings
+
+# Suppress Gemini SDK deprecation warnings globally
+warnings.filterwarnings("ignore", message=".*google.generativeai.*")
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
+
 import concurrent.futures
 import google.generativeai as genai
 import gc
@@ -150,7 +157,10 @@ with st.sidebar:
         st.session_state.lang = 'EN' if lang_choice == 'English' else 'ES'
         st.rerun()
 
-    pair_options = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "USD/CHF", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY"]
+    pair_options = [
+        "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", 
+        "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "XAU/USD", "BTC/USD"
+    ]
     selected_pair_ui = st.selectbox(t['currency_pair'], pair_options)
     
     tf_keys = ["5m", "15m", "1h", "1d"]
@@ -567,15 +577,19 @@ with tab5:
 ## 📖 Nivo FX Intelligence Suite — Glossary
 
 ### Currency Pairs
-| Pair | Name | OANDA | Category |
-|------|------|-------|----------|
-| EUR/USD | Euro / US Dollar | EUR_USD | Major |
-| GBP/USD | British Pound / US Dollar | GBP_USD | Major |
-| USD/JPY | US Dollar / Japanese Yen | USD_JPY | Major |
-| AUD/USD | Australian Dollar / US Dollar | AUD_USD | Major |
-| USD/CAD | US Dollar / Canadian Dollar | USD_CAD | Major |
-| XAU/USD | Gold | XAU_USD | Commodity |
-| BTC/USD | Bitcoin | — | Crypto |
+| Pair | Name | OANDA | Category | Precision |
+|------|------|-------|----------|-----------|
+| EUR/USD | Euro / US Dollar | EUR_USD | Major | 5 Decimals |
+| GBP/USD | British Pound / US Dollar | GBP_USD | Major | 5 Decimals |
+| USD/JPY | US Dollar / Japanese Yen | USD_JPY | Major | 3 Decimals |
+| AUD/USD | Australian Dollar / US Dollar | AUD_USD | Major | 5 Decimals |
+| USD/CAD | US Dollar / Canadian Dollar | USD_CAD | Major | 5 Decimals |
+| NZD/USD | NZ Dollar / US Dollar | NZD_USD | Major | 5 Decimals |
+| EUR/GBP | Euro / British Pound | EUR_GBP | Major | 5 Decimals |
+| EUR/JPY | Euro / Japanese Yen | EUR_JPY | Minor | 3 Decimals |
+| GBP/JPY | British Pound / Yen | GBP_JPY | Minor | 3 Decimals |
+| XAU/USD | Gold | XAU_USD | Commodity | 3 Decimals |
+| BTC/USD | Bitcoin | BTC_USD | Crypto | 5 Decimals (Mirror) |
 
 ### Technical Indicators (Brain)
 | Indicator | Period | Signal | Weight |
@@ -593,13 +607,15 @@ with tab5:
 | **HMM** | Hidden Markov Model | LOW_VOL / HIGH_VOL / CRASH |
 | **LSTM** | PyTorch Neural Net | UP / DOWN prediction |
 | **DOM** | OANDA Order Book | Bid/Ask imbalance ratio |
+| **Swing Expansion** | Volatility Filter | 15 bps Threshold (Sentinel) |
+| **Reflexivity** | Soros Paradigm | Sentiment + Technical synergy |
 
 ### Supervisor Handshake (Final Decision)
 | Brain | Cortex Regime | LSTM | Decision |
 |-------|-------------|------|----------|
 | BUY | LOW_VOL | UP | 🚀 EXECUTE LONG |
 | SELL | LOW_VOL | DOWN | 📉 EXECUTE SHORT |
-| Any | CRASH | Any | 🛑 BLOCKED |
+| Any | CRASH | Any | 🛑 BLOCKED (AI Veto) |
 | Any | HIGH_VOL | Any | ⚠️ CAUTION |
 | WAIT | — | — | ⏳ NO TRADE |
 
@@ -617,24 +633,28 @@ with tab5:
 | DOM | Depth of Market |
 | TTL | Time To Live (cache) |
 | NLP | Natural Language Processing |
-| OHLCV | Open, High, Low, Close, Volume |
 | SL | Stop Loss |
 | TP | Take Profit |
+| TS | Trailing Stop |
 """)
     else:
         st.markdown("""
 ## 📖 Nivo FX Intelligence Suite — Glosario
 
 ### Pares de Divisas
-| Par | Nombre | OANDA | Categoría |
-|-----|--------|-------|-----------|
-| EUR/USD | Euro / Dólar US | EUR_USD | Mayor |
-| GBP/USD | Libra / Dólar US | GBP_USD | Mayor |
-| USD/JPY | Dólar US / Yen | USD_JPY | Mayor |
-| AUD/USD | Dólar Australiano / Dólar US | AUD_USD | Mayor |
-| USD/CAD | Dólar US / Dólar Canadiense | USD_CAD | Mayor |
-| XAU/USD | Oro | XAU_USD | Commodity |
-| BTC/USD | Bitcoin | — | Cripto |
+| Par | Nombre | OANDA | Categoría | Decimals |
+|-----|--------|-------|-----------|----------|
+| EUR/USD | Euro / Dólar US | EUR_USD | Mayor | 5 Decimales |
+| GBP/USD | Libra / Dólar US | GBP_USD | Mayor | 5 Decimales |
+| USD/JPY | Dólar US / Yen | USD_JPY | Mayor | 3 Decimales |
+| AUD/USD | Dólar Australiano / Dólar US | AUD_USD | Mayor | 5 Decimales |
+| USD/CAD | Dólar US / Dólar Canadiense | USD_CAD | Mayor | 5 Decimales |
+| NZD/USD | Dólar NZ / Dólar US | NZD_USD | Mayor | 5 Decimales |
+| EUR/GBP | Euro / Libra | EUR_GBP | Mayor | 5 Decimales |
+| EUR/JPY | Euro / Yen | EUR_JPY | Menor | 3 Decimales |
+| GBP/JPY | Libra / Yen | GBP_JPY | Menor | 3 Decimales |
+| XAU/USD | Oro | XAU_USD | Commodity | 3 Decimales |
+| BTC/USD | Bitcoin | BTC_USD | Cripto | 5 Decimales (Espejo) |
 
 ### Indicadores Técnicos (Brain)
 | Indicador | Período | Señal | Peso |
@@ -652,13 +672,15 @@ with tab5:
 | **HMM** | Modelo Oculto de Markov | BAJA_VOL / ALTA_VOL / CRASH |
 | **LSTM** | Red Neuronal PyTorch | Predicción SUBE / BAJA |
 | **DOM** | Libro de Órdenes OANDA | Ratio desequilibrio Bid/Ask |
+| **Swing Expansion** | Filtro Volatilidad | Umbral 15 bps (Sentinel) |
+| **Reflexividad** | Paradigma Soros | Sinergia Sentimiento + Técnico |
 
 ### Apretón de Manos del Supervisor (Decisión Final)
 | Brain | Régimen Cortex | LSTM | Decisión |
 |-------|---------------|------|----------|
 | BUY | BAJA_VOL | UP | 🚀 EJECUTAR LARGO |
 | SELL | BAJA_VOL | DOWN | 📉 EJECUTAR CORTO |
-| Cualquier | CRASH | Cualquier | 🛑 BLOQUEADO |
+| Cualquier | CRASH | Cualquier | 🛑 BLOQUEADO (Veto IA) |
 | Cualquier | ALTA_VOL | Cualquier | ⚠️ PRECAUCIÓN |
 | WAIT | — | — | ⏳ SIN OPERACIÓN |
 
@@ -676,8 +698,9 @@ with tab5:
 | DOM | Profundidad de Mercado |
 | TTL | Tiempo de Vida (caché) |
 | NLP | Procesamiento de Lenguaje Natural |
-| OHLCV | Apertura, Máximo, Mínimo, Cierre, Volumen |
+| SL | Stop Loss (Parar Pérdida) |
 | TP | Take Profit (Límite de Ganancia) |
+| TS | Trailing Stop (Stop Seguimiento) |
 """)
 
 with tab6:
@@ -721,3 +744,10 @@ with tab7:
         st.plotly_chart(fig_risk, use_container_width=True)
     else:
         st.info("Risk Guardian standby...")
+
+# --- Financial Disclaimer Footer ---
+st.divider()
+if st.session_state.lang == "ES":
+    st.caption("⚠️ **Aviso Legal:** Nivo FX es una plataforma con fines puramente experimentales y didácticos. El material y los datos presentados aquí no constituyen asesoramiento financiero, recomendaciones de inversión ni incitación a la compra o venta de activos. Cualquier uso de esta información para operar en mercados reales es bajo el propio riesgo del usuario.")
+else:
+    st.caption("⚠️ **Disclaimer:** Nivo FX is a platform strictly for experimental and educational purposes. The material and data presented here do not constitute financial advice, investment recommendations, or an offer to buy or sell any assets. Any use of this information to trade in live markets is at the user's own risk.")

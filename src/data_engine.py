@@ -1,8 +1,10 @@
+import os
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import feedparser
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from src.notifications import NotificationManager
 
 class DataEngine:
     """
@@ -16,35 +18,57 @@ class DataEngine:
         if oanda_config and oanda_config.get('token') and oanda_config.get('account_id'):
             self.is_oanda_ready = True
 
-    def fetch_data(self, symbol, interval, period="60d"):
+    def fetch_data(self, pair, interval, period="60d"):
         """
-        Main entry point for data fetching.
+        Main entry point for data fetching. Expects UI pair format (e.g. 'EUR/USD')
         """
         if self.is_oanda_ready:
-            return self._fetch_oanda(symbol, interval, period)
+            return self._fetch_oanda(pair, interval, period)
         else:
-            return self._fetch_yahoo(symbol, interval, period)
+            return self._fetch_yahoo(pair, interval, period)
 
-    def _fetch_yahoo(self, symbol, interval, period):
-        try:
-            df = yf.download(tickers=symbol, interval=interval, period=period, progress=False)
-            if df.empty: return None
-            # Standardize columns
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel('Ticker')
-            return df
-        except Exception as e:
-            print(f"Yahoo Fetch Error: {e}")
-            return None
+    def _fetch_yahoo(self, pair, interval, period):
+        from src.self_healer import NivoSelfHealer
+        
+        # Auto-Fix Strategy 1: Try mapped ticker
+        primary_symbol = self.get_symbol_map(pair)
+        symbols_to_try = [primary_symbol]
+        
+        # Auto-Fix Strategy 2: Generate algorithmic fallbacks
+        if primary_symbol == pair:
+            symbols_to_try.extend(NivoSelfHealer.get_ticker_fallbacks(pair))
+            
+        last_error = None
+        for sym in symbols_to_try:
+            try:
+                df = yf.download(tickers=sym, interval=interval, period=period, progress=False)
+                if df is not None and not df.empty:
+                    # Standardize columns
+                    if isinstance(df.columns, pd.MultiIndex):
+                        df.columns = df.columns.droplevel('Ticker')
+                    return df
+            except Exception as e:
+                last_error = e
+                continue
+                
+        # If all fallbacks fail, alert via Self-Healer
+        print(f"Yahoo Fetch Error: Failed for all fallbacks for {pair}")
+        NivoSelfHealer.diagnose_and_alert(
+            component="DataEngine.YahooFetch",
+            error_msg=f"Falló la descarga de datos técnicos para {pair}.",
+            exception_obj=last_error,
+            context_data={"pair": pair, "tried_symbols": symbols_to_try}
+        )
+        return None
 
-    def _fetch_oanda(self, symbol, interval, period):
+    def _fetch_oanda(self, pair, interval, period):
         """
         Implementation of the OANDA v20 REST API fetch.
         """
         import v20
         try:
             # Map symbol to OANDA format (e.g. EUR/USD -> EUR_USD)
-            oanda_symbol = symbol.replace("/", "_").replace(" ", "_")
+            oanda_symbol = pair.replace("/", "_").replace(" ", "_")
             
             # Map interval to OANDA format
             gran_map = {
@@ -66,7 +90,7 @@ class DataEngine:
             
             if response.status != 200:
                 print(f"OANDA API Error: {response.body.get('errorMessage')}")
-                return self._fetch_yahoo(symbol, interval, period)
+                return self._fetch_yahoo(pair, interval, period)
 
             candles = response.get("candles", 200)
             data_list = []
@@ -88,7 +112,7 @@ class DataEngine:
             
         except Exception as e:
             print(f"OANDA Exception: {e}")
-            return self._fetch_yahoo(symbol, interval, period)
+            return self._fetch_yahoo(pair, interval, period)
 
     @staticmethod
     def get_symbol_map(pair):
@@ -104,10 +128,12 @@ class DataEngine:
             "EUR/GBP": "EURGBP=X",
             "EUR/JPY": "EURJPY=X",
             "GBP/JPY": "GBPJPY=X",
-            "Gold (XAU)": "GC=F",
-            "Bitcoin": "BTC-USD"
+            "XAU/USD": "GC=F",
+            "BTC/USD": "BTC-USD"
         }
-        return mapping.get(pair, pair)
+        # In case the pair is passed without slash or in a different format
+        normalized_pair = pair.replace("-", "/").replace("_", "/").upper()
+        return mapping.get(normalized_pair, mapping.get(pair, pair))
 
 class FundamentalEngine:
     """
@@ -155,5 +181,13 @@ class FundamentalEngine:
             return news_items, round(final_score, 2)
             
         except Exception as e:
+            from src.self_healer import NivoSelfHealer
             print(f"Fundamental Analysis Error for {pair_name}: {e}")
+            
+            NivoSelfHealer.diagnose_and_alert(
+                component="FundamentalEngine.Sentiment",
+                error_msg=f"Error obteniendo noticias/sentimiento para {pair_name}",
+                exception_obj=e,
+                context_data={"pair": pair_name}
+            )
             return [], 50.0 # Return neutral sentiment on failure
