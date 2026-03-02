@@ -51,22 +51,31 @@ class NivoTelegramBot:
                 "🤖 <b>Nivo FX - Command Center</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "Comandos disponibles:\n"
-                "🔹 /status - Ver operaciones abiertas y PnL\n"
-                "🔹 /market - Ver pares en escaneo y volatilidad\n"
-                "🔹 /help   - Mostrar este mensaje\n"
+                "🔹 /status - Reporte detallado de pips/PnL\n"
+                "🔹 /entries - Lista rápida de posiciones abiertas\n"
+                "🔹 /market - Ver volatilidad y pares calientes\n"
+                "🔹 /scan - Ver pares vigilados por el Sentinel\n"
+                "🔹 /balance - Ver Equidad y Margen disponible\n"
+                "🔹 /dashboard - Link a la Web Dashboard\n"
+                "🔹 /oanda - Link a OANDA Hub\n"
+                "🔹 /help - Mostrar este mensaje\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "<i>Nivo Partners Institutional Suite</i>"
             )
             self.send_message(help_text)
+
+        elif command == "/dashboard":
+            self.send_message("🌐 <b>Dashboard En Vivo:</b>\nhttps://finance-analyzer-fx.streamlit.app/")
+
+        elif command == "/oanda":
+            self.send_message("🏦 <b>OANDA Hub:</b>\nhttps://hub.oanda.com/")
 
         elif command == "/status":
             if not self.trader:
                 self.send_message("❌ Error: OANDA API no configurada.")
                 return
             
-            self.send_message("🔍 Consultando portafolio en OANDA...")
-            
-            # Fetch all instruments from environment or a standard list
+            self.send_message("🔍 Consultando portafolio detallado...")
             watchlist = os.getenv("WATCHLIST", "EUR_USD,GBP_USD,USD_JPY").split(',')
             active_found = False
             
@@ -86,9 +95,54 @@ class NivoTelegramBot:
                         token=self.token,
                         chat_id=self.chat_id
                     )
-            
             if not active_found:
-                self.send_message("✅ <b>Portafolio Limpio.</b> No hay posiciones abiertas actualmente.")
+                self.send_message("✅ <b>Portafolio Limpio.</b> No hay posiciones abiertas.")
+
+        elif command == "/entries":
+            if not self.trader:
+                self.send_message("❌ Error: API no configurada.")
+                return
+            
+            try:
+                response = self.trader.ctx.position.list_open(self.account_id)
+                positions = response.get("positions", [])
+                if not positions:
+                    self.send_message("✅ No hay entradas abiertas actualmente.")
+                    return
+                
+                msg = "📝 <b>Entradas Abiertas:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+                for pos in positions:
+                    symbol = pos.instrument
+                    long_units = float(pos.long.units)
+                    short_units = float(pos.short.units)
+                    units = long_units if long_units != 0 else short_units
+                    side = "🟢 LONG" if units > 0 else "🔴 SHORT"
+                    pnl = float(pos.unrealizedPL)
+                    msg += f"{side} <b>{symbol}</b>: {int(abs(units))} ud | PnL: ${pnl:.2f}\n"
+                msg += "━━━━━━━━━━━━━━━━━━━━"
+                self.send_message(msg)
+            except Exception as e:
+                self.send_message(f"❌ Error al listar entradas: {e}")
+
+        elif command == "/balance":
+            if not self.trader:
+                self.send_message("❌ Error: API no configurada.")
+                return
+            try:
+                response = self.trader.ctx.account.summary(self.account_id)
+                acc = response.get("account")
+                msg = (
+                    "💰 <b>Estado de Cuenta:</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"💵 <b>Balance:</b> ${float(acc.balance):,.2f}\n"
+                    f"📈 <b>Equidad (NAV):</b> ${float(acc.NAV):,.2f}\n"
+                    f"💎 <b>Margen Disp:</b> ${float(acc.marginAvailable):,.2f}\n"
+                    f"📊 <b>PnL Abierto:</b> ${float(acc.unrealizedPL):,.2f}\n"
+                    "━━━━━━━━━━━━━━━━━━━━"
+                )
+                self.send_message(msg)
+            except Exception as e:
+                self.send_message(f"❌ Error al consultar balance: {e}")
 
         elif command == "/market":
             # For now, a placeholder that lists the watchlist
@@ -100,6 +154,15 @@ class NivoTelegramBot:
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "El Sentinel está escaneando volatilidad cada minuto."
             )
+            self.send_message(msg)
+
+        elif command == "/scan":
+            watchlist = os.getenv("WATCHLIST", "No definido").split(',')
+            msg = "📡 <b>Sentinel Scanning:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            for pair in watchlist:
+                msg += f"• {pair.strip().replace('_', '/')}\n"
+            msg += "━━━━━━━━━━━━━━━━━━━━\n"
+            msg += "Estado: 🟢 Activo (1min heartbeat)"
             self.send_message(msg)
             
         else:

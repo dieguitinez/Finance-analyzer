@@ -110,6 +110,8 @@ translations = {
         'tab_risk': "🛡️ Risk Management",
         'risk_guardian': "Capital Guardian Status",
         'tab_protocol': "📜 Intelligence Protocol",
+        'lite_mode_warning': "⚡ LITE MODE ACTIVE: Heavy AI models (HMM/LSTM) are offloaded to your Linux server to save cloud memory.",
+        'lite_mode_info': "Technical info available. Neural analysis restricted to Linux terminal.",
     },
     'ES': {
         'title': "Nivo FX Studio",
