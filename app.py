@@ -20,6 +20,9 @@ from src.notifications import NotificationManager
 from src.data_engine import DataEngine, FundamentalEngine
 from quantum_engine.quantum_bridge import QuantumBridge
 from quantum_engine.risk_manager import CapitalGuardian
+from src.nivo_cortex import TORCH_AVAILABLE, HMM_AVAILABLE
+
+LITE_MODE = not (TORCH_AVAILABLE and HMM_AVAILABLE)
 
 # --- App Configuration ---
 st.set_page_config(
@@ -139,9 +142,14 @@ translations = {
         'tab_risk': "🛡️ Gestión de Riesgos",
         'risk_guardian': "Estado del Guardián de Capital",
         'tab_protocol': "📜 Protocolo de Inteligencia",
+        'lite_mode_warning': "⚡ MODO LITE ACTIVO: Los modelos pesados (HMM/LSTM) están corriendo en tu servidor Linux para ahorrar memoria en la web.",
+        'lite_mode_info': "Información técnica disponible. Análisis neuronal restringido a la Terminal Linux.",
     }
 }
 t = translations[st.session_state.lang]
+
+if LITE_MODE:
+    st.warning(t['lite_mode_warning'])
 
 # --- Sidebar UI ---
 with st.sidebar:
@@ -155,7 +163,8 @@ with st.sidebar:
 
     pair_options = [
         "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", 
-        "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "XAU/USD", "BTC/USD"
+        "USD/CHF", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", 
+        "EUR/CHF", "CHF/JPY", "AUD/JPY", "NZD/JPY", "EUR/AUD"
     ]
     selected_pair_ui = st.selectbox(t['currency_pair'], pair_options)
     
@@ -169,36 +178,42 @@ with st.sidebar:
     show_bb = st.checkbox(t['show_bb'], value=False)
     
     st.markdown("---")
-    st.subheader("Watchdog & AI Config")
-    use_alerts = st.checkbox("🔔 Enable Notifications", value=False)
-    
-    with st.expander("🔑 Institutional API (OANDA)"):
-        oanda_token = st.text_input("OANDA Token", type="password", value=st.secrets.get("oanda_token", ""), help="Leave blank to use Fallback Data Engine")
-        oanda_id = st.text_input("Account ID", value=st.secrets.get("oanda_account_id", ""))
-        
-    with st.expander("💬 Gemini 2.5 Flash API"):
-        gemini_key = st.text_input("Gemini API Key", type="password", value=st.secrets.get("gemini_api_key", ""))
+    st.info("🎯 Nivo FX Sentinel Active")
+
+# --- Institutional Config (Loaded from Secrets) ---
+oanda_token = st.secrets.get("oanda_token", "")
+oanda_id = st.secrets.get("oanda_account_id", "")
+gemini_key = st.secrets.get("gemini_api_key", "")
 
 # --- 2. Data Caching (TTL) & Async Threading ---
-@st.cache_data(ttl=60, show_spinner=False, max_entries=5)
+@st.cache_data(ttl=60, show_spinner=False, max_entries=2)
 def fetch_market_data(pair_name, tf, token, acc_id):
     """ Cached 60s. Fetches price array """
     engine = DataEngine({'token': token, 'account_id': acc_id} if token else None)
     return engine.fetch_data(DataEngine.get_symbol_map(pair_name), tf), time.time()
 
-@st.cache_data(ttl=900, show_spinner=False, max_entries=5)
-def fetch_news_data(pair_name):
-    """ Cached 15m. Proxies to the shared FundamentalEngine """
-    return FundamentalEngine.get_pair_sentiment(pair_name)
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_global_scan(pair_list, tf, token, acc_id):
+    """ Performs a lightweight technical scan across the entire watchlist. """
+    results = {}
+    engine = DataEngine({'token': token, 'account_id': acc_id} if token else None)
+    
+    def scan_one(p):
+        try:
+            df = engine.fetch_data(DataEngine.get_symbol_map(p), tf)
+            if df is not None and not df.empty:
+                brain = BrainClass(df)
+                analysis = brain.analyze_market()
+                return p, analysis['score'], analysis['signal']
+        except: pass
+        return p, 0, "ERROR"
 
-@st.cache_data(ttl=86400, show_spinner=False, max_entries=5)
-def fetch_seasonality_data(pair_name):
-    """ Cached 24h """
-    df = DataEngine().fetch_data(DataEngine.get_symbol_map(pair_name), "1d", period="max")
-    if df is not None:
-        df['Return'] = df['Close'].pct_change() * 100
-        df['Month'] = df.index.month
-    return df
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_map = {executor.submit(scan_one, p): p for p in pair_list}
+        for future in concurrent.futures.as_completed(future_map):
+            p, score, signal = future.result()
+            results[p] = {"score": score, "signal": signal}
+    return results
 
 # Main parallel executor preloading all tabs at once
 with st.spinner("⚡ Synchronizing Nivo Datasets..."):
@@ -206,10 +221,24 @@ with st.spinner("⚡ Synchronizing Nivo Datasets..."):
         f_price = executor.submit(fetch_market_data, selected_pair_ui, selected_tf, oanda_token, oanda_id)
         f_news = executor.submit(fetch_news_data, selected_pair_ui)
         f_season = executor.submit(fetch_seasonality_data, selected_pair_ui)
+        f_global = executor.submit(fetch_global_scan, pair_options, selected_tf, oanda_token, oanda_id)
         
         data, current_fetch_ts = f_price.result()
         news, avg_s = f_news.result()
         s_data = f_season.result()
+        global_results = f_global.result()
+
+def fetch_news_data(pair_name):
+    """ Proxies to the shared FundamentalEngine (No caching here, handled by ThreadPool result) """
+    return FundamentalEngine.get_pair_sentiment(pair_name)
+
+def fetch_seasonality_data(pair_name):
+    """ Fetches seasonality data (No caching here) """
+    df = DataEngine().fetch_data(DataEngine.get_symbol_map(pair_name), "1d", period="max")
+    if df is not None:
+        df['Return'] = df['Close'].pct_change() * 100
+        df['Month'] = df.index.month
+    return df
 
 # Top Navigation
 c1, c2 = st.columns([0.8, 0.2])
@@ -224,9 +253,9 @@ else:
     st.session_state.last_fetch_ts = current_fetch_ts
     needs_ai_recalc = True
 
-tab1, tab2, tab3, tab4, tab6, tab7, tab8, tab5 = st.tabs([
-    t['tab_tech'], t['tab_fund'], t['tab_season'], t['tab_kai'], 
-    t['tab_quantum'], t['tab_risk'], t['tab_protocol'], t['tab_glossary']
+tab1, tab_q, tab_f, tab_r, tab_k, tab_charts, tab_p = st.tabs([
+    t['tab_tech'], t['tab_quantum'], t['tab_fund'], t['tab_risk'], 
+    t['tab_kai'], "📊 Charts", t['tab_glossary']
 ])
 
 with tab1:
@@ -286,19 +315,28 @@ with tab1:
             if technical_signal in ["BUY", "SELL"]:
                 try:
                     cortex = CortexClass(data, oanda_token=oanda_token, oanda_id=oanda_id)
-                    regime = cortex.detect_market_regime()
-                    regime_id, regime_desc = cortex.hmm.detect_regime(data) # Fetching specific HMM logic values
-                    ai_prediction = cortex.predict_next_move()
                     
-                    lstm_status, lstm_prob_val = cortex.lstm.predict_next_move(data)
-                    lstm_desc = lstm_status
-                    lstm_prob = lstm_prob_val
-                    
+                    if not LITE_MODE:
+                        regime = cortex.detect_market_regime()
+                        regime_id, regime_desc = cortex.hmm.detect_regime(data)
+                        ai_prediction = cortex.predict_next_move()
+                        
+                        lstm_status, lstm_prob_val = cortex.lstm.predict_next_move(data)
+                        lstm_desc = lstm_status
+                        lstm_prob = lstm_prob_val
+                    else:
+                        regime, ai_prediction = "REMOTE_SENTINEL", "REMOTE_SENTINEL"
+                        regime_id, regime_desc = -1, "Active on Linux Server"
+                        lstm_desc, lstm_prob = "Calculation Offloaded", 50.0
+
                     oanda_sym = selected_pair_ui.replace("/", "_").replace(" ", "_")
                     book_data = cortex.analyze_order_book(oanda_sym)
                     
                     # --- AUTO EXECUTION SIGNAL (The Trigger) ---
-                    auto_signal, auto_reason = cortex.get_auto_execution_signal(data, res)
+                    if not LITE_MODE:
+                        auto_signal, auto_reason = cortex.get_auto_execution_signal(data, res)
+                    else:
+                        auto_signal, auto_reason = "SENTINEL_WATCH", "AI Veto monitored by Linux Server"
                 except Exception as e:
                     auto_signal, auto_reason = "ERROR", str(e)
                 
@@ -386,15 +424,29 @@ with tab1:
                 else:
                     st.metric("Next Candle Forecast", f"{ar['lstm_prob']:.1f}% Bullish" if "Bullish" in ar['lstm_desc'] else f"{ar['lstm_prob']:.1f}% Bearish", ar['lstm_desc'], delta_color="normal" if "Bullish" in ar['lstm_desc'] else "inverse")
         
-        # Quick Metrics
+        # Quick Metrics (Optimized layout)
         st.markdown("<br>", unsafe_allow_html=True)
         rc1, rc2, rc3, rc4 = st.columns(4)
         rc1.metric(t['current_price'], f"{ar['res']['current_price']:.5f}")
         rc2.metric("ADX (14) Strength", f"{ar['brain_df']['ADX'].iloc[-1]:.1f}")
         rc3.metric(t['stop_loss'], f"{ar['res']['stop_loss']:.5f}")
         rc4.metric(t['take_profit'], f"{ar['res']['take_profit']:.5f}")
+    else:
+        st.error("No data available for this pair/timeframe. Try a higher timeframe.")
 
-        # Plotly Charts
+with tab_f:
+    st.markdown(f"### {t['news_title']}")
+    st.metric(t['sentiment_overall'], f"{avg_s:.3f}", "Bullish" if avg_s > 0 else "Bearish")
+    for n in news:
+        icon = "🟢" if n['score'] > 0.1 else "🔴" if n['score'] < -0.1 else "⚪"
+        st.write(f"{icon} **[{n['title']}]({n['link']})**")
+
+with tab_charts:
+    st.markdown("### 📊 Advanced Visuals & Price Action")
+    if isinstance(data, pd.DataFrame) and not data.empty:
+        ar = st.session_state.ai_results
+        
+        # Plotly Charts (Moved here to optimize performance of analysis tabs)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
         fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name="Price"), row=1, col=1)
         
@@ -406,27 +458,17 @@ with tab1:
         fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
         
-        fig.update_layout(template="plotly_dark", height=700, margin=dict(l=10, r=10, t=20, b=10), xaxis_rangeslider_visible=False)
+        fig.update_layout(template="plotly_dark", height=600, margin=dict(l=10, r=10, t=20, b=10), xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, width='stretch')
         
-    else:
-        st.error("No data available for this pair/timeframe. Try a higher timeframe.")
-
-with tab2:
-    st.markdown(f"### {t['news_title']}")
-    st.metric(t['sentiment_overall'], f"{avg_s:.3f}", "Bullish" if avg_s > 0 else "Bearish")
-    for n in news:
-        icon = "🟢" if n['score'] > 0.1 else "🔴" if n['score'] < -0.1 else "⚪"
-        st.write(f"{icon} **[{n['title']}]({n['link']})**")
-
-with tab3:
+    st.markdown("---")
     st.markdown(f"### {t['tab_season']}")
     if s_data is not None:
         avg_ret = s_data.groupby('Month')['Return'].mean()
         fig_sea = px.bar(avg_ret, title="Historical Avg Return by Month")
         st.plotly_chart(fig_sea, width='stretch')
 
-with tab4:
+with tab_k:
     st.markdown(f"### {t['tab_kai']}")
     if not gemini_key:
         st.info("Please provide a Gemini API Key in the sidebar to talk to Kai FX.")
@@ -447,15 +489,16 @@ with tab4:
                 st.write(prompt)
                 
             with chat_container.chat_message("assistant"):
-                # Pass market context to Kai
-                context = f"Market: {selected_pair_ui}, Score: {ar['res']['score'] if 'ar' in locals() else 'N/A'}. Details: {ar['res']['reasons'] if 'ar' in locals() else ''}"
-                full_prompt = f"System Context: {context}\nUser: {prompt}"
+                # Pass market context to Kai (Local and Global)
+                global_ctx = ", ".join([f"{k}: {v['score']:.1f} ({v['signal']})" for k, v in global_results.items()])
+                context = f"Selected Market: {selected_pair_ui}, Score: {ar['res']['score'] if 'ar' in locals() else 'N/A'}. Details: {ar['res']['reasons'] if 'ar' in locals() else ''}. ALL MARKETS SUMMARY: {global_ctx}"
+                full_prompt = f"System Context: {context}\nUser: {prompt}\nAnalyze the best opportunities across all pairs if asked."
                 
                 # Resilient model cascade - All Free Tier, each with independent quota
                 model_cascade = [
-                    'gemini-2.0-flash',       # Fast, primary
+                    'gemini-2.5-flash',       # Smarter, primary
+                    'gemini-2.0-flash',       # Fast, secondary
                     'gemini-2.0-flash-lite',  # Lightest, separate quota
-                    'gemini-2.5-flash',       # Smarter, separate quota
                     'gemini-2.5-flash-lite',  # Light v2.5, separate quota
                     'gemini-flash-latest',    # Alias fallback
                 ]
@@ -484,223 +527,18 @@ with tab4:
                 if len(st.session_state.chat_history) > 50:
                     st.session_state.chat_history = st.session_state.chat_history[-50:]
 
-with tab8:
-    if st.session_state.lang == 'EN':
-        st.markdown("""
-### 📜 Nivo Intelligence Protocol — The Nexus Workflow
+with tab_p:
+    p_tab, g_tab = st.tabs(["📜 Protocol", "📖 Glossary"])
+    with p_tab:
+        st.markdown("### Institutional Intelligence Protocol")
+        st.write("- **Regime:** HQMM risk detection.")
+        st.write("- **Reflexivity:** Sentiment/Price synergy.")
+    with g_tab:
+        st.markdown("### 📖 Nivo Glossary")
+        st.write("- **EMA:** Exponential Moving Average.")
+        st.write("- **RSI:** Relative Strength Index.")
 
-The Nivo FX system executes a precise **5-Step Intelligence Nexus** every 60 seconds for each currency pair. This process merges institutional mathematical paradigms (Simons, Soros) with Deep Learning.
-
-#### STEP 1: Structural Regime Analysis (Jim Simons Paradigm)
-- **Engine:** `MarketRegimeDetector` (HQMM). **[QUANTUM ENGINE ACTIVE]**
-- **Process:** We first classify the market into **Low Volatility**, **Trending**, or **Chaotic**.
-- **Impact:** If the market is **Chaotic (Regime 2)**, the brain automatically dampens all signals to protect capital from erratic noise.
-
-#### STEP 2: Linear Baseline Synchronization
-- **Engine:** `NivoTradeBrain`.
-- **Process:** Classical scan of Exponential Moving Averages (EMA 50/200), RSI, and MACD.
-- **Goal:** Establishes the primary price direction based on mathematical momentum.
-
-#### STEP 3: Fundamental Sentiment Filter
-- **Engine:** `FundamentalEngine` (NLP Sentinel).
-- **Process:** Real-time extraction of global news. VADER (Natural Language Processing) scores the news from -1 (Extremely Bearish) to +1 (Extremely Bullish).
-- **Goal:** Determines if the global economic narrative supports the price movement.
-
-#### STEP 4: Reflexivity Convergence (George Soros Paradigm)
-- **Engine:** `QuantumBridge.calculate_nivo_q_score`. **[QUANTUM ENGINE ACTIVE]**
-- **Logic:** 
-    - **SYNERGY (+25% Boost):** If Step 2 (Price) and Step 3 (News) align, we detect a **Positive Feedback Loop**.
-    - **FRICTION (-25% Dampening):** If they diverge, we assume the trend is unsustainable.
-- **Impact:** Only high-convergence signals reach the execution threshold.
-
-#### STEP 5: Deep Learning Veto (LSTM Neural Net)
-- **Engine:** `CPUOptimizedLSTM`. **[QUANTUM ENGINE ACTIVE]**
-- **Process:** A neural network analyzes the last 60 bars to predict the most likely "Next Candle".
-- **Impact:** If the LSTM disagrees with the Technical + Fundamental logic, it issues a **Veto**, canceling the trade to avoid "Bull/Bear Traps".
-
----
-
-### 🛡️ Final Execution Thresholds
-- **Final Q-Score > 65:** Atomic Signal: **BUY**.
-- **Final Q-Score < 35:** Atomic Signal: **SELL**.
-- **Stop Loss:** **1.5x ATR** (Volatility buffer).
-- **Take Profit:** **3.0x ATR** (Triple volatility target).
-""")
-    else:
-        st.markdown("""
-### 📜 Protocolo de Inteligencia Nivo — El Flujo Nexus
-
-El sistema Nivo FX ejecuta un **Nexus de Inteligencia de 5 Pasos** cada 60 segundos para cada par de divisas. Este proceso fusiona paradigmas matemáticos institucionales (Simons, Soros) con el Deep Learning.
-
-#### PASO 1: Análisis Estructural (Paradigma de Jim Simons)
-- **Motor:** `MarketRegimeDetector` (HQMM). **[CÁLCULO CUÁNTICO ACTIVO]**
-- **Proceso:** Clasificamos el mercado en **Baja Volatilidad**, **Tendencia** o **Caótico**.
-- **Impacto:** Si el mercado es **Caótico (Régimen 2)**, el sistema reduce automáticamente todas las señales para proteger el capital del ruido errático.
-
-#### PASO 2: Sincronización de Línea Base Lineal
-- **Motor:** `NivoTradeBrain`.
-- **Proceso:** Escaneo clásico de Medias Móviles Exponenciales (EMA 50/200), RSI y MACD.
-- **Objetivo:** Establece la dirección primaria del precio basada en el impulso matemático.
-
-#### PASO 3: Filtro Fundamental de Sentimiento
-- **Motor:** `FundamentalEngine` (NLP Sentinel).
-- **Proceso:** Extracción en tiempo real de noticias globales. VADER (Procesamiento de Lenguaje Natural) califica las noticias desde -1 (Extremadamente Bajista) hasta +1 (Extremadamente Alcista).
-- **Objetivo:** Determina si la narrativa económica global respalda el movimiento del precio.
-
-#### PASO 4: Convergencia de Reflexividad (Paradigma de George Soros)
-- **Motor:** `QuantumBridge.calculate_nivo_q_score`. **[CÁLCULO CUÁNTICO ACTIVO]**
-- **Lógica:** 
-    - **SINERGIA (+25% de Aumento):** Si el Paso 2 (Precio) y el Paso 3 (Noticias) se alinean, detectamos un **Bucle de Retroalimentación Positiva**.
-    - **FRICCIÓN (-25% de Reducción):** Si divergen, asumimos que la tendencia es insostenible.
-- **Impacto:** Solo las señales de alta convergencia alcanzan el umbral de ejecución.
-
-#### PASO 5: Veto de Deep Learning (Red Neuronal LSTM)
-- **Motor:** `CPUOptimizedLSTM`. **[CÁLCULO CUÁNTICO ACTIVO]**
-- **Proceso:** Una red neuronal analiza las últimas 60 barras para predecir la "Siguiente Vela" más probable.
-- **Impacto:** Si la LSTM no está de acuerdo con la lógica Técnica + Fundamental, emite un **Veto**, cancelando la operación para evitar trampas de mercado.
-
----
-
-### 🛡️ Umbrales de Ejecución Final
-- **Score Q Final > 65:** Señal Atómica: **COMPRA**.
-- **Score Q Final < 35:** Señal Atómica: **VENTA**.
-- **Stop Loss:** **1.5x ATR** (Buffer de volatilidad).
-- **Take Profit:** **3.0x ATR** (Objetivo de triple volatilidad).
-""")
-
-with tab5:
-    if st.session_state.lang == 'EN':
-        st.markdown("""
-## 📖 Nivo FX Intelligence Suite — Glossary
-
-### Currency Pairs
-| Pair | Name | OANDA | Category | Precision |
-|------|------|-------|----------|-----------|
-| EUR/USD | Euro / US Dollar | EUR_USD | Major | 5 Decimals |
-| GBP/USD | British Pound / US Dollar | GBP_USD | Major | 5 Decimals |
-| USD/JPY | US Dollar / Japanese Yen | USD_JPY | Major | 3 Decimals |
-| AUD/USD | Australian Dollar / US Dollar | AUD_USD | Major | 5 Decimals |
-| USD/CAD | US Dollar / Canadian Dollar | USD_CAD | Major | 5 Decimals |
-| NZD/USD | NZ Dollar / US Dollar | NZD_USD | Major | 5 Decimals |
-| EUR/GBP | Euro / British Pound | EUR_GBP | Major | 5 Decimals |
-| EUR/JPY | Euro / Japanese Yen | EUR_JPY | Minor | 3 Decimals |
-| GBP/JPY | British Pound / Yen | GBP_JPY | Minor | 3 Decimals |
-| XAU/USD | Gold | XAU_USD | Commodity | 3 Decimals |
-| BTC/USD | Bitcoin | BTC_USD | Crypto | 5 Decimals (Mirror) |
-
-### Technical Indicators (Brain)
-| Indicator | Period | Signal | Weight |
-|-----------|--------|--------|--------|
-| **EMA 50/200** | 50 & 200 candles | Above EMA 200 = Bullish | 3.0 pts |
-| **RSI** | 14 candles | <35 Oversold, >65 Overbought | 2.0 pts |
-| **Bollinger Bands** | 20, 2σ | Band rejection = reversal | 2.0 pts |
-| **MACD** | 12, 26, 9 | Crossover = momentum shift | 2.0 pts |
-| **ATR** | 14 candles | Volatility for SL/TP | Risk Mgmt |
-| **ADX** | 14 candles | >25 = Strong Trend | 1.0 pt |
-
-### AI Layer (Cortex)
-| Component | Technology | Output |
-|-----------|-----------|--------|
-| **HMM** | Hidden Markov Model | LOW_VOL / HIGH_VOL / CRASH |
-| **LSTM** | PyTorch Neural Net | UP / DOWN prediction |
-| **DOM** | OANDA Order Book | Bid/Ask imbalance ratio |
-| **Swing Expansion** | Volatility Filter | 15 bps Threshold (Sentinel) |
-| **Reflexivity** | Soros Paradigm | Sentiment + Technical synergy |
-
-### Supervisor Handshake (Final Decision)
-| Brain | Cortex Regime | LSTM | Decision |
-|-------|-------------|------|----------|
-| BUY | LOW_VOL | UP | 🚀 EXECUTE LONG |
-| SELL | LOW_VOL | DOWN | 📉 EXECUTE SHORT |
-| Any | CRASH | Any | 🛑 BLOCKED (AI Veto) |
-| Any | HIGH_VOL | Any | ⚠️ CAUTION |
-| WAIT | — | — | ⏳ NO TRADE |
-
-### Acronyms
-| Term | Meaning |
-|------|---------|
-| EMA | Exponential Moving Average |
-| RSI | Relative Strength Index |
-| MACD | Moving Average Convergence Divergence |
-| ATR | Average True Range |
-| ADX | Average Directional Index |
-| BB | Bollinger Bands |
-| HMM | Hidden Markov Model |
-| LSTM | Long Short-Term Memory |
-| DOM | Depth of Market |
-| TTL | Time To Live (cache) |
-| NLP | Natural Language Processing |
-| SL | Stop Loss |
-| TP | Take Profit |
-| TS | Trailing Stop |
-""")
-    else:
-        st.markdown("""
-## 📖 Nivo FX Intelligence Suite — Glosario
-
-### Pares de Divisas
-| Par | Nombre | OANDA | Categoría | Decimals |
-|-----|--------|-------|-----------|----------|
-| EUR/USD | Euro / Dólar US | EUR_USD | Mayor | 5 Decimales |
-| GBP/USD | Libra / Dólar US | GBP_USD | Mayor | 5 Decimales |
-| USD/JPY | Dólar US / Yen | USD_JPY | Mayor | 3 Decimales |
-| AUD/USD | Dólar Australiano / Dólar US | AUD_USD | Mayor | 5 Decimales |
-| USD/CAD | Dólar US / Dólar Canadiense | USD_CAD | Mayor | 5 Decimales |
-| NZD/USD | Dólar NZ / Dólar US | NZD_USD | Mayor | 5 Decimales |
-| EUR/GBP | Euro / Libra | EUR_GBP | Mayor | 5 Decimales |
-| EUR/JPY | Euro / Yen | EUR_JPY | Menor | 3 Decimales |
-| GBP/JPY | Libra / Yen | GBP_JPY | Menor | 3 Decimales |
-| XAU/USD | Oro | XAU_USD | Commodity | 3 Decimales |
-| BTC/USD | Bitcoin | BTC_USD | Cripto | 5 Decimales (Espejo) |
-
-### Indicadores Técnicos (Brain)
-| Indicador | Período | Señal | Peso |
-|-----------|---------|-------|------|
-| **EMA 50/200** | 50 y 200 velas | Sobre EMA 200 = Alcista | 3.0 pts |
-| **RSI** | 14 velas | <35 Sobreventa, >65 Sobrecompra | 2.0 pts |
-| **Bandas Bollinger** | 20, 2σ | Rechazo de banda = reversión | 2.0 pts |
-| **MACD** | 12, 26, 9 | Cruce = cambio de impulso | 2.0 pts |
-| **ATR** | 14 velas | Volatilidad para SL/TP | Gestión Riesgo |
-| **ADX** | 14 velas | >25 = Tendencia Fuerte | 1.0 pt |
-
-### Capa de IA (Cortex)
-| Componente | Tecnología | Salida |
-|------------|-----------|--------|
-| **HMM** | Modelo Oculto de Markov | BAJA_VOL / ALTA_VOL / CRASH |
-| **LSTM** | Red Neuronal PyTorch | Predicción SUBE / BAJA |
-| **DOM** | Libro de Órdenes OANDA | Ratio desequilibrio Bid/Ask |
-| **Swing Expansion** | Filtro Volatilidad | Umbral 15 bps (Sentinel) |
-| **Reflexividad** | Paradigma Soros | Sinergia Sentimiento + Técnico |
-
-### Apretón de Manos del Supervisor (Decisión Final)
-| Brain | Régimen Cortex | LSTM | Decisión |
-|-------|---------------|------|----------|
-| BUY | BAJA_VOL | UP | 🚀 EJECUTAR LARGO |
-| SELL | BAJA_VOL | DOWN | 📉 EJECUTAR CORTO |
-| Cualquier | CRASH | Cualquier | 🛑 BLOQUEADO (Veto IA) |
-| Cualquier | ALTA_VOL | Cualquier | ⚠️ PRECAUCIÓN |
-| WAIT | — | — | ⏳ SIN OPERACIÓN |
-
-### Acrónimos
-| Término | Significado |
-|---------|-------------|
-| EMA | Media Móvil Exponencial |
-| RSI | Índice de Fuerza Relativa |
-| MACD | Convergencia/Divergencia de Medias Móviles |
-| ATR | Rango Verdadero Promedio |
-| ADX | Índice Direccional Promedio |
-| BB | Bandas de Bollinger |
-| HMM | Modelo Oculto de Markov |
-| LSTM | Memoria de Largo-Corto Plazo |
-| DOM | Profundidad de Mercado |
-| TTL | Tiempo de Vida (caché) |
-| NLP | Procesamiento de Lenguaje Natural |
-| SL | Stop Loss (Parar Pérdida) |
-| TP | Take Profit (Límite de Ganancia) |
-| TS | Trailing Stop (Stop Seguimiento) |
-""")
-
-with tab6:
+with tab_q:
     st.markdown(f"### {t['tab_quantum']}")
     if 'ar' in locals() and 'q_res' in ar:
         q_res = ar['q_res']
@@ -718,8 +556,12 @@ with tab6:
     else:
         st.info("Quantum engine calculating...")
 
-with tab7:
+with tab_r:
     st.markdown(f"### {t['tab_risk']}")
+    # Initialize guardian_vis and pnl_hist outside the if block to ensure they are always defined
+    guardian_vis = CapitalGuardian(max_daily_loss_pct=-2.0, max_position_size=2.0)
+    pnl_hist = [0.0] # Default empty history
+    
     if 'ar' in locals() and ar is not None and 'q_res' in ar:
         q_res = ar['q_res']
         
@@ -729,22 +571,36 @@ with tab7:
         else:
             st.success(f"**{t['risk_guardian']}:** {q_res.get('guardian_status', '')}")
             
-        # Display the Plotly Dashboard
-        guardian_vis = CapitalGuardian(max_daily_loss_pct=-2.0, max_position_size=2.0)
-        
         # Use live PnL history if available from the engine, otherwise zero-state
         pnl_hist = q_res.get('pnl_history', [0.0])
         if not pnl_hist:
             pnl_hist = [0.0]
             
-        fig_risk = guardian_vis.plot_risk_dashboard(pnl_hist, lang=st.session_state.lang.lower())
-        st.plotly_chart(fig_risk, width='stretch')
-    else:
-        st.info("Risk Guardian standby...")
+    fig_risk = guardian_vis.plot_risk_dashboard(pnl_hist, lang=st.session_state.lang.lower())
+    st.plotly_chart(fig_risk, width='stretch')
+
+    with st.expander("💼 Portafolio en Vivo (OANDA Open Positions)"):
+        if oanda_token and oanda_id:
+            try:
+                from src.auto_execution import NivoAutoTrader
+                trader = NivoAutoTrader(oanda_token, oanda_id)
+                watchlist = [p.replace("/", "_") for p in pair_options]
+                positions = []
+                for p in watchlist:
+                    perf = trader.get_position_performance(p)
+                    if perf:
+                        perf['Instrument'] = p.replace("_", "/")
+                        positions.append(perf)
+                if positions:
+                    pos_df = pd.DataFrame(positions)
+                    st.table(pos_df[['Instrument', 'units', 'pips', 'pnl_usd', 'entry_price', 'current_price']])
+                else: st.info("No hay posiciones abiertas.")
+            except Exception as e: st.error(f"Error: {e}")
+        else: st.info("Conecte OANDA para ver posiciones.")
 
 # --- Financial Disclaimer Footer ---
 st.divider()
 if st.session_state.lang == "ES":
-    st.caption("⚠️ **Aviso Legal:** Nivo FX es una plataforma con fines puramente experimentales y didácticos. El material y los datos presentados aquí no constituyen asesoramiento financiero, recomendaciones de inversión ni incitación a la compra o venta de activos. Cualquier uso de esta información para operar en mercados reales es bajo el propio riesgo del usuario.")
+    st.caption("⚠️ **Aviso Legal:** Nivo FX es una plataforma con fines puramente experimentales y didácticos.")
 else:
-    st.caption("⚠️ **Disclaimer:** Nivo FX is a platform strictly for experimental and educational purposes. The material and data presented here do not constitute financial advice, investment recommendations, or an offer to buy or sell any assets. Any use of this information to trade in live markets is at the user's own risk.")
+    st.caption("⚠️ **Disclaimer:** Nivo FX is a platform strictly for experimental and educational purposes.")

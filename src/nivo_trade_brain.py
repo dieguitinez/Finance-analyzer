@@ -128,7 +128,13 @@ class NivoTradeBrain:
         self.STRONG_SCORE = 85
 
         is_long = score_long >= score_short
-        final_score = (score_long if is_long else score_short) * 10 # Scale to 0-100
+        # Directional Score: 50 is neutral. 
+        # If long, score goes from 50 to 100. If short, score goes from 50 to 0.
+        if is_long:
+            final_score = 50 + (score_long * 5) # Scale 0-10 to 50-100
+        else:
+            final_score = 50 - (score_short * 5) # Scale 0-10 to 50-0
+            
         reasons = reasons_long if is_long else reasons_short
         
         signal = "WAIT"

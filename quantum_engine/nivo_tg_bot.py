@@ -1,0 +1,143 @@
+import os
+import time
+import requests
+import json
+import logging
+from dotenv import load_dotenv
+
+# Ensure project root is importable
+import sys
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from src.auto_execution import NivoAutoTrader
+from src.notifications import NotificationManager
+
+# Setup Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | NIVO BOT: [%(levelname)s] | %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class NivoTelegramBot:
+    def __init__(self):
+        load_dotenv()
+        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        self.api_url = f"https://api.telegram.org/bot{self.token}"
+        self.last_update_id = 0
+        
+        # OANDA Setup
+        self.api_key = os.getenv("OANDA_ACCESS_TOKEN")
+        self.account_id = os.getenv("OANDA_ACCOUNT_ID")
+        self.env = "practice" if "practice" in os.getenv("OANDA_BASE_URL", "practice") else "live"
+        self.trader = NivoAutoTrader(self.api_key, self.account_id, environment=self.env) if self.api_key else None
+
+    def send_message(self, text):
+        url = f"{self.api_url}/sendMessage"
+        payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
+        try:
+            requests.post(url, json=payload)
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+
+    def handle_command(self, command, args=[]):
+        command = command.lower()
+        
+        if command == "/start" or command == "/help":
+            help_text = (
+                "🤖 <b>Nivo FX - Command Center</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Comandos disponibles:\n"
+                "🔹 /status - Ver operaciones abiertas y PnL\n"
+                "🔹 /market - Ver pares en escaneo y volatilidad\n"
+                "🔹 /help   - Mostrar este mensaje\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "<i>Nivo Partners Institutional Suite</i>"
+            )
+            self.send_message(help_text)
+
+        elif command == "/status":
+            if not self.trader:
+                self.send_message("❌ Error: OANDA API no configurada.")
+                return
+            
+            self.send_message("🔍 Consultando portafolio en OANDA...")
+            
+            # Fetch all instruments from environment or a standard list
+            watchlist = os.getenv("WATCHLIST", "EUR_USD,GBP_USD,USD_JPY").split(',')
+            active_found = False
+            
+            for symbol in watchlist:
+                perf = self.trader.get_position_performance(symbol.strip())
+                if perf:
+                    active_found = True
+                    NotificationManager.position_performance_report(
+                        pair=symbol.replace("_", "/"),
+                        units=perf['units'],
+                        entry_price=perf['entry_price'],
+                        current_price=perf['current_price'],
+                        sl_price=perf.get('sl_price', 0),
+                        exit_price=perf.get('exit_price', 0),
+                        pips=perf['pips'],
+                        pnl_usd=perf['pnl_usd'],
+                        token=self.token,
+                        chat_id=self.chat_id
+                    )
+            
+            if not active_found:
+                self.send_message("✅ <b>Portafolio Limpio.</b> No hay posiciones abiertas actualmente.")
+
+        elif command == "/market":
+            # For now, a placeholder that lists the watchlist
+            watchlist = os.getenv("WATCHLIST", "No definido")
+            msg = (
+                "📊 <b>Market Watchlist</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"Pares monitoreados:\n<code>{watchlist}</code>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "El Sentinel está escaneando volatilidad cada minuto."
+            )
+            self.send_message(msg)
+            
+        else:
+            self.send_message(f"❓ Comando desconocido: {command}. Escribe /help para ayuda.")
+
+    def poll_updates(self):
+        url = f"{self.api_url}/getUpdates"
+        params = {"offset": self.last_update_id + 1, "timeout": 30}
+        
+        try:
+            response = requests.get(url, params=params, timeout=35)
+            if response.status_code == 200:
+                data = response.json()
+                for update in data.get("result", []):
+                    self.last_update_id = update["update_id"]
+                    if "message" in update and "text" in update["message"]:
+                        text = update["message"]["text"]
+                        user_id = str(update["message"]["chat"]["id"])
+                        
+                        # Security Check: Only respond to the authorized chat_id
+                        if user_id != self.chat_id:
+                            logger.warning(f"Unauthorized access attempt from user {user_id}")
+                            continue
+                        
+                        if text.startswith("/"):
+                            parts = text.split()
+                            self.handle_command(parts[0], parts[1:])
+            else:
+                logger.error(f"Polling error: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Error polling: {e}")
+
+    def run(self):
+        logger.info("Nivo Telegram Bot started. Listening for commands...")
+        while True:
+            self.poll_updates()
+            time.sleep(1)
+
+if __name__ == "__main__":
+    bot = NivoTelegramBot()
+    bot.run()

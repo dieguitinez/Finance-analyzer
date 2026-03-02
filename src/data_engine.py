@@ -128,8 +128,11 @@ class DataEngine:
             "EUR/GBP": "EURGBP=X",
             "EUR/JPY": "EURJPY=X",
             "GBP/JPY": "GBPJPY=X",
-            "XAU/USD": "GC=F",
-            "BTC/USD": "BTC-USD"
+            "EUR/CHF": "EURCHF=X",
+            "CHF/JPY": "CHFJPY=X",
+            "AUD/JPY": "AUDJPY=X",
+            "NZD/JPY": "NZDJPY=X",
+            "EUR/AUD": "EURAUD=X"
         }
         # In case the pair is passed without slash or in a different format
         normalized_pair = pair.replace("-", "/").replace("_", "/").upper()
