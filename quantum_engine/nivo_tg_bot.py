@@ -77,27 +77,35 @@ class NivoTelegramBot:
                 return
             
             self.send_message("🔍 Consultando portafolio detallado...")
-            watchlist = os.getenv("WATCHLIST", "EUR_USD,GBP_USD,USD_JPY").split(',')
-            active_found = False
             
-            for symbol in watchlist:
-                perf = self.trader.get_position_performance(symbol.strip())
-                if perf:
-                    active_found = True
-                    NotificationManager.position_performance_report(
-                        pair=symbol.replace("_", "/"),
-                        units=perf['units'],
-                        entry_price=perf['entry_price'],
-                        current_price=perf['current_price'],
-                        sl_price=perf.get('sl_price', 0),
-                        exit_price=perf.get('exit_price', 0),
-                        pips=perf['pips'],
-                        pnl_usd=perf['pnl_usd'],
-                        token=self.token,
-                        chat_id=self.chat_id
-                    )
-            if not active_found:
-                self.send_message("✅ <b>Portafolio Limpio.</b> No hay posiciones abiertas.")
+            try:
+                # Optimized: Get only active instruments first instead of looping through entire watchlist
+                pos_response = self.trader.ctx.position.list_open(self.account_id)
+                positions = pos_response.get("positions", 200)
+                
+                if not positions:
+                    self.send_message("✅ <b>Portafolio Limpio.</b> No hay posiciones abiertas.")
+                    return
+
+                for pos in positions:
+                    symbol = pos.instrument
+                    perf = self.trader.get_position_performance(symbol)
+                    if perf:
+                        NotificationManager.position_performance_report(
+                            pair=symbol.replace("_", "/"),
+                            units=perf['units'],
+                            entry_price=perf['entry_price'],
+                            current_price=perf['current_price'],
+                            sl_price=perf.get('sl_price', 0),
+                            exit_price=perf.get('exit_price', 0),
+                            insured_pips=perf.get('insured_pips', 0),
+                            pips=perf['pips'],
+                            pnl_usd=perf['pnl_usd'],
+                            token=self.token,
+                            chat_id=self.chat_id
+                        )
+            except Exception as e:
+                self.send_message(f"❌ Error al consultar estatus: {e}")
 
         elif command == "/entries":
             if not self.trader:
