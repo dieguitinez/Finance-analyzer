@@ -106,7 +106,7 @@ class NivoTelegramBot:
             
             try:
                 response = self.trader.ctx.position.list_open(self.account_id)
-                positions = response.get("positions", [])
+                positions = response.get("positions", 200)
                 if not positions:
                     self.send_message("✅ No hay entradas abiertas actualmente.")
                     return
@@ -131,7 +131,7 @@ class NivoTelegramBot:
                 return
             try:
                 response = self.trader.ctx.account.summary(self.account_id)
-                acc = response.get("account")
+                acc = response.get("account", 200)
                 msg = (
                     "💰 <b>Estado de Cuenta:</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
