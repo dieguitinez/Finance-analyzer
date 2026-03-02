@@ -31,9 +31,11 @@ echo "[5/6] Removing Python bytecode and temporary caches..."
 find . -type d -name "__pycache__" -exec rm -rf {} +
 find . -type f -name "*.pyc" -delete
 
-# 6. Deployment Artifact Cleanup
-echo "[6/6] Removing old deployment archives..."
+# 6. Deployment & Log Artifact Cleanup
+echo "[6/6] Removing old deployment archives and heavy root logs..."
 rm -f *.tar.gz
+rm -f nohup.out
+rm -f *.log
 
 echo "============================================="
 echo " ✅ Cleanup Complete. Updated Disk Usage:"

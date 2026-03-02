@@ -18,12 +18,12 @@ fi
 # Make it executable
 chmod +x "$CLEAN_SCRIPT"
 
-# Add to crontab (Run every 3 days at 00:00)
+# Add to crontab (Run every day at 00:00)
 # Format: min hour day month weekday command
-(crontab -l 2>/dev/null; echo "0 0 */3 * * /bin/bash $CLEAN_SCRIPT > /dev/null 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 0 * * * /bin/bash $CLEAN_SCRIPT > /dev/null 2>&1") | crontab -
 
 echo "SUCCESS: Cron job scheduled!"
-echo "The system will now automatically clean logs and cache every 3 days at midnight."
+echo "The system will now automatically clean logs and cache EVERY DAY at midnight."
 echo "============================================="
 crontab -l | grep "clean_logs.sh"
 echo "============================================="
