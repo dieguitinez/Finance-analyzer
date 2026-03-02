@@ -20,7 +20,13 @@ from src.notifications import NotificationManager
 from src.data_engine import DataEngine, FundamentalEngine
 from quantum_engine.quantum_bridge import QuantumBridge
 from quantum_engine.risk_manager import CapitalGuardian
-from src.nivo_cortex import TORCH_AVAILABLE, HMM_AVAILABLE
+from src.nivo_cortex import CortexClass, MarketRegimeDetector
+
+# Import availability flags for Lite Mode detection
+try:
+    from src.nivo_cortex import TORCH_AVAILABLE, HMM_AVAILABLE
+except ImportError:
+    TORCH_AVAILABLE, HMM_AVAILABLE = False, False
 
 LITE_MODE = not (TORCH_AVAILABLE and HMM_AVAILABLE)
 

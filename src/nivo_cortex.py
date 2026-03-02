@@ -1,7 +1,5 @@
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
 try:
     from hmmlearn.hmm import GaussianHMM
     HMM_AVAILABLE = True
@@ -11,9 +9,23 @@ except ImportError:
         def fit(self, *args, **kwargs): pass
         def predict(self, *args, **kwargs): return [0]
     HMM_AVAILABLE = False
+
+try:
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    # Mock nn.Module for class inheritance safety
+    class nn:
+        class Module: pass
+
 import requests
 import warnings
 import gc
+
+# Ensure flags are globally accessible for Lite Mode detection
+__all__ = ['CortexClass', 'MarketRegimeDetector', 'TORCH_AVAILABLE', 'HMM_AVAILABLE']
 
 # Suppress standard convergence warnings for cleaner console output
 warnings.filterwarnings("ignore")
