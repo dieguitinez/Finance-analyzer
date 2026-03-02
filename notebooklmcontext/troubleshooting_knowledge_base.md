@@ -53,8 +53,16 @@ This document records recurring issues, non-obvious failure modes, and technical
     - Then, fetch details *only* for symbols with open trades.
 - **File affected**: `quantum_engine/nivo_tg_bot.py`
 
-## 🌍 Fundamental Engine
+### 🌍 Fundamental Engine & Strategy Expansion
 
-### MarketPulse Integration
+#### Pullback (Retrocesos) Strategy
+- **Logic**: Operates on "discount" prices within a strong trend.
+- **Criteria**:
+    - Final Macro Direction confirmed by EMA 200.
+    - Correction detected when Price touches/crosses EMA 50.
+    - Re-entry Trigger: Bullish Pullback if RSI < 45 | Bearish Pullback if RSI > 55.
+- **Effect**: Successfully filters out entries at "expensive" overextended prices, improving R/R ratios.
+
+#### MarketPulse Integration
 - **Context**: Standard Yahoo RSS feeds can be noisy. MarketPulse (OANDA) provides higher-quality institutional commentary.
 - **Lesson**: Kai FX is more accurate when combining both sources and analyzing at least 20 headlines to filter out volatility noise.

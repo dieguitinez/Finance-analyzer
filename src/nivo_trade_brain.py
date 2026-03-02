@@ -123,6 +123,30 @@ class NivoTradeBrain:
             reasons_long.append("✅ Strong Trend Strength (ADX > 25)")
             reasons_short.append("✅ Strong Trend Strength (ADX > 25)")
 
+        # --- 📈 PULLBACK (RETROCESO) LOGIC ---
+        is_pullback = False
+        pullback_type = None
+        
+        # Pullback en Tendencia Alcista (Long)
+        if last['Close'] > last['EMA_200']:
+            # El precio está en corrección si está cerca o debajo de EMA 50
+            if last['Close'] <= last['EMA_50'] * 1.001: 
+                # Gatillo: RSI saliendo de sobreventa o zona baja
+                if last['RSI'] < 45:
+                    is_pullback = True
+                    pullback_type = "BULLISH PULLBACK"
+                    score_long += 1.5 # Boost para favorecer la entrada en descuento
+                    reasons_long.append("🎯 PULLBACK: Precio en descuento sobre EMA 50")
+        
+        # Pullback en Tendencia Bajista (Short)
+        elif last['Close'] < last['EMA_200']:
+            if last['Close'] >= last['EMA_50'] * 0.999:
+                if last['RSI'] > 55:
+                    is_pullback = True
+                    pullback_type = "BEARISH PULLBACK"
+                    score_short += 1.5
+                    reasons_short.append("🎯 PULLBACK: Precio en zona de recarga (Short)")
+
         # Symmetrical Thresholds for Nivo Partners standard execution
         self.MIN_BUY = 60
         self.STRONG_BUY = 85
@@ -153,6 +177,8 @@ class NivoTradeBrain:
             "score": final_score,
             "signal": signal,
             "direction": "LONG" if is_long else "SHORT",
+            "is_pullback": is_pullback,
+            "pullback_type": pullback_type,
             "confidence": f"{final_score}%",
             "current_price": float(last['Close']),
             "stop_loss": float(last['Close'] - (1.5 * last['ATR'])) if is_long else float(last['Close'] + (1.5 * last['ATR'])),
