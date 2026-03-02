@@ -120,10 +120,10 @@ class DataEngine:
         mapping = {
             "EUR/USD": "EURUSD=X",
             "GBP/USD": "GBPUSD=X",
-            "USD/JPY": "JPY=X",
+            "USD/JPY": "USDJPY=X",
             "AUD/USD": "AUDUSD=X",
             "USD/CAD": "USDCAD=X",
-            "USD/CHF": "CHF=X",
+            "USD/CHF": "USDCHF=X",
             "NZD/USD": "NZDUSD=X",
             "EUR/GBP": "EURGBP=X",
             "EUR/JPY": "EURJPY=X",
@@ -132,11 +132,13 @@ class DataEngine:
             "CHF/JPY": "CHFJPY=X",
             "AUD/JPY": "AUDJPY=X",
             "NZD/JPY": "NZDJPY=X",
-            "EUR/AUD": "EURAUD=X"
+            "EUR/AUD": "EURAUD=X",
+            "BTC/USD": "BTC-USD",
+            "XAU/USD": "GC=F"
         }
         # In case the pair is passed without slash or in a different format
-        normalized_pair = pair.replace("-", "/").replace("_", "/").upper()
-        return mapping.get(normalized_pair, mapping.get(pair, pair))
+        normalized_pair = pair.replace("-", "/").replace("_", "/").upper().strip()
+        return mapping.get(normalized_pair, normalized_pair if "=" in normalized_pair else f"{normalized_pair.replace('/', '')}=X")
 
 class FundamentalEngine:
     """

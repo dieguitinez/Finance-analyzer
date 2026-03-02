@@ -107,8 +107,12 @@ def run_headless_cycle():
         tf = "1h"
         
         logger.info(f"Assembling structural matrix for {pair} ({tf})...")
-        engine = DataEngine()
-        df = engine.fetch_data(DataEngine.get_symbol_map(pair), tf)
+        oanda_cfg = {
+            "token": os.getenv("OANDA_ACCESS_TOKEN"),
+            "account_id": os.getenv("OANDA_ACCOUNT_ID")
+        }
+        engine = DataEngine(oanda_config=oanda_cfg)
+        df = engine.fetch_data(pair, tf)
         
         if df is None or df.empty:
             logger.warning("No data retrieved. Exiting array cycle.")
