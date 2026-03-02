@@ -2,7 +2,15 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from hmmlearn.hmm import GaussianHMM
+try:
+    from hmmlearn.hmm import GaussianHMM
+    HMM_AVAILABLE = True
+except ImportError:
+    class GaussianHMM:
+        def __init__(self, *args, **kwargs): pass
+        def fit(self, *args, **kwargs): pass
+        def predict(self, *args, **kwargs): return [0]
+    HMM_AVAILABLE = False
 import requests
 import warnings
 import gc
@@ -186,8 +194,9 @@ class OrderBookAnalyzer:
     Analyzes OANDA v20 order book for microstructure bias.
     Returns dict with 'outlook' key.
     """
-    def __init__(self, oanda_token: str = ""):
+    def __init__(self, oanda_token: str = "", oanda_id: str = ""):
         self.oanda_token = oanda_token
+        self.oanda_id = oanda_id
 
     def analyze(self, instrument: str) -> dict:
         """
@@ -198,12 +207,15 @@ class OrderBookAnalyzer:
             return {"outlook": "Disabled (No API Key)", "imbalance": 0.0}
 
         try:
-            url = f"https://api-fxpractice.oanda.com/v3/instruments/{instrument}/orderBook"
+            # Determine correct host based on account ID
+            host = "api-fxtrade.oanda.com" if "live" in self.oanda_id.lower() else "api-fxpractice.oanda.com"
+            url = f"https://{host}/v3/instruments/{instrument}/orderBook"
             headers = {"Authorization": f"Bearer {self.oanda_token}"}
             response = requests.get(url, headers=headers, timeout=5)
 
             if response.status_code != 200:
-                return {"error": f"API {response.status_code}", "outlook": "Error"}
+                err_msg = response.json().get('errorMessage', f'API {response.status_code}')
+                return {"error": err_msg, "outlook": "Error"}
 
             data = response.json()
             buckets = data.get("orderBook", {}).get("buckets", [])
@@ -249,14 +261,15 @@ class NivoCortex:
         cortex.lstm.predict_next_move(data)           -> (str, float)
         cortex.analyze_order_book(symbol)             -> dict
     """
-    def __init__(self, data: pd.DataFrame = None, oanda_token: str = ""):
+    def __init__(self, data: pd.DataFrame = None, oanda_token: str = "", oanda_id: str = ""):
         self.data = data
         self.oanda_token = oanda_token
+        self.oanda_id = oanda_id
 
         # Sub-modules accessible as attributes
         self.hmm = MarketRegimeDetector()
         self.lstm = NivoLSTM()
-        self.order_book = OrderBookAnalyzer(oanda_token)
+        self.order_book = OrderBookAnalyzer(oanda_token, oanda_id)
 
         # Auto-train HMM if data provided
         if data is not None and len(data) >= 100:

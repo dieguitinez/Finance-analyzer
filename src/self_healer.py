@@ -1,13 +1,8 @@
-import warnings
-# Broadest possible suppression for the specific Google SDK warning before any other imports
-warnings.filterwarnings("ignore", message=".*google.generativeai.*")
-warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
-
 import os
 import json
 import logging
 import traceback
-import google.generativeai as genai
+from google import genai
 from src.notifications import NotificationManager
 
 logger = logging.getLogger(__name__)
@@ -48,8 +43,9 @@ class NivoSelfHealer:
             return "⚠️ Gemini API no configurada para diagnósticos."
             
         try:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # The new SDK automatically picks up GOOGLE_API_KEY from environment, 
+            # but we'll be explicit for clarity.
+            client = genai.Client(api_key=api_key)
             
             prompt = f"""
             Eres el Nivo FX Self-Healer. 
@@ -61,7 +57,10 @@ class NivoSelfHealer:
             Sé directo. Máximo 3 o 4 líneas.
             """
             
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=prompt
+            )
             return response.text.strip()
         except Exception as e:
             return f"⚠️ Error consultando a la IA para diagnóstico: {str(e)}"

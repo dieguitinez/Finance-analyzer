@@ -9,9 +9,9 @@ vaderSentiment
 twilio
 v20
 oandapyV20
-google-generativeai
+google-genai
 PyYAML
-hmmlearn
+# hmmlearn
 torch
 scikit-learn
 requests

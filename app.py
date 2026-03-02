@@ -11,12 +11,8 @@ import time
 import os
 import warnings
 
-# Suppress Gemini SDK deprecation warnings globally
-warnings.filterwarnings("ignore", message=".*google.generativeai.*")
-warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
-
 import concurrent.futures
-import google.generativeai as genai
+from google import genai
 import gc
 
 # Custom Modular Imports
@@ -289,7 +285,7 @@ with tab1:
             
             if technical_signal in ["BUY", "SELL"]:
                 try:
-                    cortex = CortexClass(data, oanda_token=oanda_token)
+                    cortex = CortexClass(data, oanda_token=oanda_token, oanda_id=oanda_id)
                     regime = cortex.detect_market_regime()
                     regime_id, regime_desc = cortex.hmm.detect_regime(data) # Fetching specific HMM logic values
                     ai_prediction = cortex.predict_next_move()
@@ -411,7 +407,7 @@ with tab1:
         fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
         
         fig.update_layout(template="plotly_dark", height=700, margin=dict(l=10, r=10, t=20, b=10), xaxis_rangeslider_visible=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
     else:
         st.error("No data available for this pair/timeframe. Try a higher timeframe.")
@@ -428,15 +424,14 @@ with tab3:
     if s_data is not None:
         avg_ret = s_data.groupby('Month')['Return'].mean()
         fig_sea = px.bar(avg_ret, title="Historical Avg Return by Month")
-        st.plotly_chart(fig_sea, use_container_width=True)
+        st.plotly_chart(fig_sea, width='stretch')
 
 with tab4:
     st.markdown(f"### {t['tab_kai']}")
     if not gemini_key:
         st.info("Please provide a Gemini API Key in the sidebar to talk to Kai FX.")
     else:
-        genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('gemini-2.0-flash') # Confirmed available via ListModels
+        client = genai.Client(api_key=gemini_key)
         
         chat_container = st.container()
         for chat in st.session_state.chat_history:
@@ -468,8 +463,10 @@ with tab4:
                 
                 for model_name in model_cascade:
                     try:
-                        model = genai.GenerativeModel(model_name)
-                        response = model.generate_content(full_prompt)
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=full_prompt
+                        )
                         response_text = response.text
                         break  # Success, exit cascade
                     except Exception as api_err:
@@ -717,7 +714,7 @@ with tab6:
         labels = ["Low Volatility", "Trending", "Chaotic"]
         fig_q = px.bar(x=labels, y=probs, labels={'x': 'Regime', 'y': 'Probability'}, color=labels, title="HQMM State Vector", template="plotly_dark")
         fig_q.update_layout(height=400)
-        st.plotly_chart(fig_q, use_container_width=True)
+        st.plotly_chart(fig_q, width='stretch')
     else:
         st.info("Quantum engine calculating...")
 
@@ -741,7 +738,7 @@ with tab7:
             pnl_hist = [0.0]
             
         fig_risk = guardian_vis.plot_risk_dashboard(pnl_hist, lang=st.session_state.lang.lower())
-        st.plotly_chart(fig_risk, use_container_width=True)
+        st.plotly_chart(fig_risk, width='stretch')
     else:
         st.info("Risk Guardian standby...")
 
