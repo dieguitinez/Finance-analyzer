@@ -38,7 +38,7 @@ class NivoSelfHealer:
         """
         Uses Gemini API to explain the error and suggest a fix.
         """
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         if not api_key:
             return "⚠️ Gemini API no configurada para diagnósticos."
             
@@ -57,11 +57,25 @@ class NivoSelfHealer:
             Sé directo. Máximo 3 o 4 líneas.
             """
             
-            response = client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=prompt
-            )
-            return response.text.strip()
+            # Resilient model cascade
+            model_cascade = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash']
+            
+            response_text = None
+            for model_name in model_cascade:
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt
+                    )
+                    response_text = response.text.strip()
+                    break
+                except Exception:
+                    continue
+            
+            if response_text is None:
+                return "⚠️ No se pudo obtener diagnóstico (Quota o Modelo no encontrado)."
+                
+            return response_text
         except Exception as e:
             return f"⚠️ Error consultando a la IA para diagnóstico: {str(e)}"
 
