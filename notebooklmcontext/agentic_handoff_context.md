@@ -73,22 +73,30 @@ Because the Windows machine is sandboxed, direct `git push` often fails.
 
 ### 1. Gemini SDK Migration (google-genai)
 - **The Shift**: The system now uses the new `google-genai` SDK. All AI interactions (Kai FX and Self-Healer) go through `genai.Client`.
-- **Quota Protection (Model Cascade)**: To avoid "Resource Exhausted" errors on the free tier, the system employs a model cascade logic. If `gemini-2.0-flash` hits a limit, it immediately tries `gemini-1.5-flash` or `gemini-2.0-flash-lite`. This multiples the total daily request capacity.
+- **Quota Protection (Model Cascade)**: Employs a model cascade logic (2.0 Flash -> 2.0 Flash Lite -> 1.5 Flash).
+- **Update**: Prioritize **`gemini-2.0-flash`** for all analysis.
 
-### 2. OANDA Live vs. Practice Dynamic Host
-- **Logic**: `src/nivo_cortex.py` now uses a dynamic URL constructor.
-- **Targeting**: It automatically selects `api-fxpractice.oanda.com` or `api-fxtrade.oanda.com` based on the provided `OANDA_ACCOUNT_ID`. Ensure the account ID is passed during initialization.
+### 2. OANDA Priority & Sentinel Reliability
+- **Prioritization**: `DataEngine` now explicitly prioritizes OANDA REST data over Yahoo Finance to avoid rate-limiting and ticker mapping errors on Linux.
+- **Sentinel**: The background `market_sentinel.py` now passes `OANDA_ACCESS_TOKEN` to `DataEngine` during its 1-min cycles to guarantee bank-grade pricing data.
 
-### 3. Yahoo Finance (`yfinance`) Stability
-- **Requirement**: `yfinance` MUST be version `0.2.51` or higher to prevent `EURUSD=X` download failures on Linux environments.
+### 3. Telegram Command Center (v2.0)
+- **Architecture**: Refactored to separate "quick list" (`/entries`) from "detailed metrics" (`/status`).
+- **Optimization**: `/status` now queries OANDA for open positions *first*, then iterates detailed performance only for active trades. This fixed 100% CPU lockups and timeouts on 1GB RAM servers.
+
+## 🦾 Nivo Trade Brain: Symmetric Conviction
+- **The Fix**: Fixed a legacy "Long Bias" where SELL signals were ignored.
+- **Logic**: Trigger thresholds are now symmetric around the 50 neutral axis:
+    - **BUY**: Score > 60
+    - **SELL**: Score < 40
+- **Fundamental weight**: Kai FX now analyzes **20 headlines** (instead of 10) and integrates **MarketPulse (OANDA)** RSS feed as the primary institutional sentiment source.
 
 ## 💾 Infrastructure & Maintenance
 - **Environment**: All critical keys (`OANDA`, `TELEGRAM`, `GOOGLE_API_KEY`) must reside in the server's `.env`.
-- **Dashboard Deployment**: Synchronize via `git push origin main`.
-- **HMM Fallback**: If `hmmlearn` fails to install due to C++ Build Tools, `src/nivo_cortex.py` uses a mock class to allow the resto of the system to run without the "Market Regime" feature.
+- **Sync Protocol**: Due to server file locks or local cache, use `git fetch origin` followed by `git reset --hard origin/main` to force the server into sync with GitHub.
 
 ## 🤖 Directives for the Next Agent (Updated)
-1.  **Do NOT revert to `google-generativeai`.** The migration to `google-genai` is complete and verified.
-2.  **Model Selection (Verified 2026)**: Use the `model_cascade` pattern. Prioritize **`gemini-2.5-flash`** for intelligence and **`gemini-2.5-flash-lite`** for high-volume cycles (~1,000 RPD). `gemini-1.5-flash` is considered legacy/restricted and should be avoided.
-3.  **HMM Detection**: If the user wants the "Market Regime" feature back, verify C++ Build Tools availability before uncommenting `hmmlearn` in `requirements.txt`.
-4.  **Server Recovery**: If `ImportError: google.genai` occurs on server, perform a clean `pip uninstall` and `install` inside the `.venv` to clear the namespace.
+1.  **Do NOT revert to `google-generativeai`.**
+2.  **OANDA v20 Library**: Remember that `response.get("key", 200)` uses the second argument for the **HTTP Status Code**. Never pass a default list or dict there.
+3.  **Symmetry**: Always maintain the 60/40 threshold in `nivo_trade_brain.py` to ensure bidirectional trading.
+4.  **HMM Fallback**: If `hmmlearn` fails, use the mock implementation in `src/nivo_cortex.py`.

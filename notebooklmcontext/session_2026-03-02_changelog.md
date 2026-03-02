@@ -33,3 +33,13 @@ This session focused on migrating from the deprecated `google-generativeai` to t
 - **Remote Namespace Conflict Fixed**: Resolved `ImportError: cannot import name 'genai' from 'google'` on the server by performing a clean uninstall/reinstall of `google-genai` inside the `.venv`.
 - **Remote Environment**: Verified that `yfinance` and `google-genai` are now functional in the production environment.
 - **Services**: Updated and restarted `nivo-sentinel.service`.
+
+### 6. 🦾 Nivo Trade Brain & Logic Optimization
+- **Symmetric Thresholds**: Fixed "Long Bias" by implementing symmetric logic: BUY (> 60), SELL (< 40).
+- **Fundamental Expansion**: Increased news limit to 20 headlines and integrated **MarketPulse (OANDA)** RSS feed into the `FundamentalEngine`.
+- **Logic Alignment**: Ensured technical and fundamental scores use the same 0-100 normalization for the QuantumBridge.
+
+### 7. 🤖 Telegram Command Center (v2.0)
+- **New Commands**: Added `/entries`, `/scan`, `/balance`, `/dashboard`, and `/oanda`.
+- **v20 Support**: Fixed a critical library error in the `/entries` command related to `response.get()` status codes.
+- **Performance**: Optimized the `/status` command to only query active positions, significantly reducing latency and server load.
