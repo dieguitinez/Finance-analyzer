@@ -36,6 +36,7 @@ echo "[6/6] Removing old deployment archives and heavy root logs..."
 rm -f *.tar.gz
 rm -f nohup.out
 rm -f *.log
+rm -f ai_stock_sentinel/*.log*
 
 echo "============================================="
 echo " ✅ Cleanup Complete. Updated Disk Usage:"
