@@ -637,7 +637,7 @@ with tab_s:
 
             # 🐋 Whale Detector & Watchlist
             st.markdown("#### 📡 Real-Time Sentinel Monitor")
-            watchlist = os.getenv("STOCK_WATCHLIST", "NVDA,TSM,ASML,ARM,AVGO").split(',')
+            watchlist = os.getenv("STOCK_WATCHLIST", "NVDA,TSM,ASML,ARM,AVGO,MU,AMD,SNPS,CDNS,LRCX,AMAT,KLAC,VRT,MRVL,SMCI").split(',')
             
             stock_data = []
             for sym in watchlist:
