@@ -113,6 +113,24 @@ translations = {
         'tab_stock': "🎯 AI Stock Sentinel",
         'lite_mode_warning': "⚡ LITE MODE ACTIVE: Heavy AI models (HMM/LSTM) are offloaded to your Linux server to save cloud memory.",
         'lite_mode_info': "Technical info available. Neural analysis restricted to Linux terminal.",
+        'glossary_terms': {
+            "Whale Detector": "Algorithm that identifies massive institutional purchases based on volume spikes (2.5x avg).",
+            "Sector Conviction": "Confidence metric based on leading indicators (e.g., ASML). If the leader is bullish, sector conviction increases.",
+            "Institutional Footprint": "Traces of 'smart money' identified through volume and price action analysis.",
+            "NVDA (NVIDIA)": "Global leader in GPUs and hardware for Artificial Intelligence.",
+            "TSM (TSMC)": "Taiwan Semiconductor, the world's largest chip manufacturer.",
+            "ASML": "Monopoly in lithography machines (EUV) essential for making advanced chips.",
+            "ARM": "The architectural foundation of nearly all modern mobile and server processors.",
+            "AVGO (Broadcom)": "Networking and connectivity infrastructure for AI data centers.",
+            "MU (Micron)": "Leader in high-bandwidth memory (HBM) critical for AI accelerators.",
+            "AMD": "NVIDIA's main competitor in high-performance AI chips.",
+            "SNPS & CDNS": "EDA software leaders (Electronic Design Automation) used to design complex chips.",
+            "LRCX & AMAT": "Suppliers of specialized equipment for semiconductor wafer fabrication.",
+            "KLAC": "Process control and inspection systems for chip manufacturing quality.",
+            "VRT (Vertiv)": "Critical power and cooling infrastructure for AI server farms.",
+            "MRVL (Marvell)": "Data infrastructure and storage solutions for high-speed AI workloads.",
+            "SMCI (SuperMicro)": "High-performance servers optimized for AI processing."
+        }
     },
     'ES': {
         'title': "Nivo FX Studio",
@@ -154,6 +172,24 @@ translations = {
         'tab_stock': "🎯 AI Stock Sentinel",
         'lite_mode_warning': "⚡ MODO LITE ACTIVO: Los modelos pesados (HMM/LSTM) están corriendo en tu servidor Linux para ahorrar memoria en la web.",
         'lite_mode_info': "Información técnica disponible. Análisis neuronal restringido a la Terminal Linux.",
+        'glossary_terms': {
+            "Whale Detector": "Algoritmo que identifica compras institucionales masivas basadas en picos de volumen (2.5x prom).",
+            "Sector Conviction": "Métrica de confianza basada en indicadores líderes (ej. ASML). Si el líder sube, la convicción del sector aumenta.",
+            "Institutional Footprint": "Rastros de 'dinero inteligente' identificados mediante análisis de volumen y acción del precio.",
+            "NVDA (NVIDIA)": "Líder mundial en GPUs y hardware para Inteligencia Artificial.",
+            "TSM (TSMC)": "Taiwan Semiconductor, el fabricante de chips más grande del mundo.",
+            "ASML": "Monopolio en máquinas de litografía (EUV) esenciales para fabricar chips avanzados.",
+            "ARM": "La base arquitectónica de casi todos los procesadores modernos de móviles y servidores.",
+            "AVGO (Broadcom)": "Infraestructura de redes y conectividad para centros de datos de IA.",
+            "MU (Micron)": "Líder en memorias de alto ancho de banda (HBM) críticas para aceleradores de IA.",
+            "AMD": "Principal competidor de NVIDIA en chips de IA de alto rendimiento.",
+            "SNPS y CDNS": "Líderes en software EDA (Automatización de Diseño Electrónico) para diseñar chips complejos.",
+            "LRCX y AMAT": "Proveedores de equipos especializados para la fabricación de obleas de semiconductores.",
+            "KLAC": "Sistemas de control de procesos e inspección para la calidad en la fabricación de chips.",
+            "VRT (Vertiv)": "Infraestructura crítica de energía y enfriamiento para granjas de servidores de IA.",
+            "MRVL (Marvell)": "Soluciones de infraestructura de datos y almacenamiento para cargas de trabajo de IA.",
+            "SMCI (SuperMicro)": "Servidores de alto rendimiento optimizados para el procesamiento de IA."
+        }
     }
 }
 t = translations[st.session_state.lang]
@@ -545,9 +581,10 @@ with tab_p:
         st.write("- **Regime:** HQMM risk detection.")
         st.write("- **Reflexivity:** Sentiment/Price synergy.")
     with g_tab:
-        st.markdown("### 📖 Nivo Glossary")
-        st.write("- **EMA:** Exponential Moving Average.")
-        st.write("- **RSI:** Relative Strength Index.")
+        st.markdown(f"### 📖 {t['tab_glossary']}")
+        if isinstance(t.get('glossary_terms'), dict):
+            for term, desc in t['glossary_terms'].items():
+                st.write(f"- **{term}:** {desc}")
 
 with tab_q:
     st.markdown(f"### {t['tab_quantum']}")
