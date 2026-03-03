@@ -70,6 +70,7 @@ find $RemotePath -name "*.sh" -exec sed -i 's/\r$//' {} +
 echo '---- Restarting Services ----'
 sudo systemctl restart nivo-dashboard.service
 sudo systemctl restart nivo-sentinel.service
+sudo systemctl restart stock-sentinel.service
 sudo systemctl restart nivo-bot.service
 echo '---- Deployment Unpacked and Services Restarted Successfully ----'
 "@
@@ -89,3 +90,4 @@ Write-Host "=============================================" -ForegroundColor Gree
 Write-Host "Remember to restart the systemd services on Linux if they are already running:"
 Write-Host "  sudo systemctl restart nivo-dashboard.service"
 Write-Host "  sudo systemctl restart nivo-sentinel.service"
+Write-Host "  sudo systemctl restart stock-sentinel.service"
