@@ -163,10 +163,15 @@ def run_headless_cycle():
         logger.info("Engaging Quantum Bridge Tensors...")
         q_res = q_bridge.execute_pipeline(df)
         
+        # BUGFIX: 'regime_id' does not exist in execute_pipeline output.
+        # Derive it from 'hqmm_probs' using argmax (0=low_vol, 1=trending, 2=chaotic)
+        hqmm_probs = q_res.get('hqmm_probs', [0.33, 0.34, 0.33])
+        q_regime_state = int(np.argmax(hqmm_probs))
+
         final_score = q_bridge.calculate_nivo_q_score(
             legacy_tech_score=legacy_tech,
             legacy_fund_score=legacy_fund,
-            q_regime_state=q_res.get('regime_id', 0),
+            q_regime_state=q_regime_state,
             q_forecast_delta=q_res.get('qlstm_bull_prob', 0.5) * 100,
             q_position_weight=q_res.get('optimal_position_size', 1.0)
         )
@@ -189,7 +194,8 @@ def run_headless_cycle():
         
         # 4. Guardian Risk Sandbox Filtering
         current_pnl = 0.0 # TODO: In production, query the actual live OANDA Account PnL ratio
-        raw_signal = "BUY" if final_score > 65.0 else "SELL" if final_score < 35.0 else "WAIT"
+        # Thresholds per agentic_handoff_context.md: BUY > 60, SELL < 40 (symmetric)
+        raw_signal = "BUY" if final_score > 60.0 else "SELL" if final_score < 40.0 else "WAIT"
         
         final_signal, capped_weight, guardian_msg = guardian.evaluate_trade(
             raw_signal=raw_signal,
@@ -264,7 +270,8 @@ def run_headless_cycle():
             logger.info(f"🔍 No se detectaron posiciones abiertas para {oanda_symbol}. Evaluando señales de entrada...")
             # No hay posicion - Procedemos con la Evaluacion de Entrada
             current_pnl = 0.0 
-            raw_signal = "BUY" if final_score > 65.0 else "SELL" if final_score < 35.0 else "WAIT"
+            # Thresholds per agentic_handoff_context.md: BUY > 60, SELL < 40 (symmetric)
+            raw_signal = "BUY" if final_score > 60.0 else "SELL" if final_score < 40.0 else "WAIT"
             
             final_signal, capped_weight, guardian_msg = guardian.evaluate_trade(
                 raw_signal=raw_signal,
