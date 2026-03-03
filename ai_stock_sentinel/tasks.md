@@ -7,4 +7,5 @@
 - [x] Integración: Sistema de Alertas Telegram para Acciones <!-- id: 4 -->
 - [x] Implementación: Filtros Avanzados (Detector de Ballenas y Monitor ASML) <!-- id: 6 -->
 - [x] UI: Integración de Pestaña "Stock Sentinel" en Dashboard Streamlit <!-- id: 7 -->
+- [x] Configuración: Activar API Keys en Streamlit Cloud (Secrets) <!-- id: 8 -->
 - [ ] Despliegue: Configuración en el Segundo Laptop <!-- id: 5 -->

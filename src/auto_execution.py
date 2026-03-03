@@ -1,10 +1,14 @@
 import os
 import requests
 import json
+import logging
 import pandas as pd
 from v20 import Context
 from v20.order import MarketOrderRequest
 from v20.transaction import StopLossDetails, TrailingStopLossDetails
+
+# Setup Logging
+logger = logging.getLogger(__name__)
 
 class NivoAutoTrader:
     """
@@ -265,6 +269,48 @@ class NivoAutoTrader:
         except Exception as e:
             print(f"[ERROR] update_step_trailing failed: {e}")
             return False
+
+    def close_all_positions(self):
+        """Emergency: Closes ALL open positions in the account."""
+        try:
+            logger.warning("🚨 [EMERGENCY] Closing ALL open positions...")
+            response = self.ctx.position.list_open(self.account_id)
+            positions = response.get("positions", 200)
+            
+            if not positions:
+                return {"status": "success", "message": "No open positions found"}
+                
+            results = []
+            for pos in positions:
+                instrument = pos.instrument
+                long_units = float(getattr(pos.long, "units", 0))
+                short_units = float(getattr(pos.short, "units", 0))
+                
+                # To close, we need to send the opposite units
+                if long_units > 0:
+                    units_to_close = -abs(long_units)
+                elif short_units < 0:
+                    units_to_close = abs(short_units)
+                else:
+                    continue
+                
+                decimals = 3 if "JPY" in instrument else 5
+                pricing = self.ctx.pricing.get(self.account_id, instruments=instrument)
+                prices = pricing.get("prices")
+                current_price = float(prices[0].closeoutBid if units_to_close < 0 else prices[0].closeoutAsk)
+                
+                # Execute basic market order to flat
+                order_request = MarketOrderRequest(
+                    instrument=instrument,
+                    units=int(units_to_close)
+                )
+                res = self.ctx.order.market(self.account_id, **order_request.dict())
+                results.append({"instrument": instrument, "status": res.status})
+            
+            return {"status": "success", "closed": results}
+        except Exception as e:
+            print(f"[ERROR] close_all_positions failed: {e}")
+            return {"status": "error", "message": str(e)}
 
     def calculate_position_size(self, stop_loss_pips):
         """Calculate units based on risk percentage and stop loss distance."""

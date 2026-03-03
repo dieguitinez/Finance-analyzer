@@ -35,11 +35,14 @@ def execute_oanda_safe_trade(instrument: str, units: int, action: str, stop_loss
     Routes trade through NivoAutoTrader to enforce the 3-Layer Risk Protocol.
     Includes EMERGENCY KILL SWITCH check.
     """
-    # 0. Emergency Panic Button Check
-    kill_switch = os.getenv("EMERGENCY_KILL_SWITCH", "False").lower() == "true"
-    if kill_switch:
-        logger.warning(f"🛑 [EMERGENCY KILL SWITCH ACTIVATED] 🛑 Dropping {action} order for {instrument}. Autotrading is completely halted.")
+    # 0. Emergency Panic Button Check (Persistent Lock File)
+    lock_file = os.path.join(_project_root, ".panic_lock")
+    if os.path.exists(lock_file):
+        logger.warning(f"🛑 [EMERGENCY KILL SWITCH ACTIVATED] 🛑 Found .panic_lock. Dropping {action} order for {instrument}. Autotrading is completely halted.")
         return False
+        
+    # Also check legacy env var for backward compatibility
+    kill_switch = os.getenv("EMERGENCY_KILL_SWITCH", "False").lower() == "true"
         
     api_key = os.getenv("OANDA_ACCESS_TOKEN")
     account_id = os.getenv("OANDA_ACCOUNT_ID")

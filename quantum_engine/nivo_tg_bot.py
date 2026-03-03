@@ -58,6 +58,8 @@ class NivoTelegramBot:
                 "🔹 /balance - Ver Equidad y Margen disponible\n"
                 "🔹 /dashboard - Link a la Web Dashboard\n"
                 "🔹 /oanda - Link a OANDA Hub\n"
+                "🛑 /kill - BOTÓN DE PÁNICO (Cierra todo y bloquea)\n"
+                "🟢 /resume - Reanudar operación bloqueada\n"
                 "🔹 /help - Mostrar este mensaje\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "<i>Actualizado: 2026-03-02 15:00</i>\n"
@@ -173,6 +175,37 @@ class NivoTelegramBot:
             msg += "━━━━━━━━━━━━━━━━━━━━\n"
             msg += "Estado: 🟢 Activo (1min heartbeat)"
             self.send_message(msg)
+
+        elif command == "/kill":
+            self.send_message("🚨 <b>PROTOCOL: EMERGENCY KILL SWITCH</b>\nIniciando secuencia de detención total...")
+            try:
+                # 1. Create Persistent Lock File
+                lock_file = os.path.join(_project_root, ".panic_lock")
+                with open(lock_file, "w") as f:
+                    f.write(f"Killed by Telegram at {time.ctime()}")
+                
+                # 2. Force Close All Positions
+                if self.trader:
+                    res = self.trader.close_all_positions()
+                    if res.get("status") == "success":
+                        self.send_message("✅ <b>SISTEMA DETENIDO.</b> Todas las posiciones han sido cerradas y el motor de ejecución está bloqueado.")
+                    else:
+                        self.send_message(f"⚠️ Motor bloqueado, pero hubo un error al cerrar posiciones: {res.get('message')}")
+                else:
+                    self.send_message("✅ <b>MOTOR BLOQUEADO.</b> (No se detectó configuración de OANDA para cerrar posiciones).")
+            except Exception as e:
+                self.send_message(f"❌ Error crítico en Protocolo Kill: {e}")
+
+        elif command == "/resume":
+            lock_file = os.path.join(_project_root, ".panic_lock")
+            if os.path.exists(lock_file):
+                try:
+                    os.remove(lock_file)
+                    self.send_message("🟢 <b>SISTEMA REANUDADO.</b> El motor de ejecución ha sido desbloqueado y volverá a operar en el próximo ciclo.")
+                except Exception as e:
+                    self.send_message(f"❌ Error al intentar reanudar: {e}")
+            else:
+                self.send_message("ℹ️ El sistema ya se encuentra en estado operativo (No había bloqueo activo).")
             
         else:
             self.send_message(f"❓ Comando desconocido: {command}. Escribe /help para ayuda.")

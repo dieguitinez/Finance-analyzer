@@ -45,6 +45,8 @@ class NivoStockWatcher:
         self.cerebro = StockCerebralEngine()
         self.executor = StockExecutionEngine(self.trading_client)
         
+        # New: Order Queue for pre-market
+        self.order_queue = []
         self.watchlist = os.getenv('STOCK_WATCHLIST', 'NVDA,TSM').split(',')
         self.autonomous_mode = os.getenv('STOCK_AUTONOMOUS_MODE', 'True') == 'True'
         
@@ -64,9 +66,42 @@ class NivoStockWatcher:
         bars = self.data_client.get_stock_bars(request_params)
         return bars.df
 
+    def is_market_open(self):
+        """
+        Verifica el estado del mercado. 
+        Nocturno: Solo Análisis.
+        9:29 AM: Ejecución de cola.
+        9:30 AM - 4:00 PM: Live Trading.
+        """
+        now = datetime.now()
+        current_minutes = now.hour * 60 + now.minute
+        
+        if now.weekday() >= 5:
+            return False, "OFFLINE", "Fin de semana"
+            
+        if current_minutes == 569: # 9:29 AM
+            return True, "TRIGGER", "Pre-Apertura Institucional (Triggering Queue)"
+            
+        if current_minutes < 570:
+            return True, "ANALYZE_ONLY", "Análisis Nocturno/Pre-Mercado"
+            
+        if current_minutes > 960:
+            return True, "ANALYZE_ONLY", "Post-Mercado (Análisis)"
+            
+        return True, "LIVE", "Mercado Abierto"
+
     def scan_market(self):
-        """Escanea y ejecuta con lógica de Convicción de Sector"""
-        print(f"\n🔍 Escaneo de Alta Inteligencia: {time.strftime('%H:%M:%S')}")
+        """Escanea 24/7 y decide si ejecutar o encolar."""
+        is_active, session_type, reason = self.is_market_open()
+        if not is_active:
+            print(f"🌖 {reason}. Sentinel en reposo.")
+            return
+
+        if session_type == "TRIGGER":
+            self.execute_queue()
+            return
+
+        print(f"\n🔍 Escaneo ({session_type}): {time.strftime('%H:%M:%S')}")
         
         # 1. Analizar primero al Líder (ASML) como Indicador Adelantado
         sector_conviction = False
@@ -88,24 +123,46 @@ class NivoStockWatcher:
                 
                 print(f"💎 {symbol}: ${current_price:.2f} | {reason}")
                 
-                # 3. Ejecución con Filtro de Convicción
+                # 3. Ejecución con Filtro de Convicción y Horario
                 if signal:
                     # Si ASML también está fuerte (o si es ASML mismo), la señal es más potente
                     is_high_conviction = sector_conviction or symbol == "ASML"
                     
-                    msg = f"🚀 *Nivo Sentinel:* Señal detectada en {symbol}\nMotivo: {reason}"
-                    if is_high_conviction:
-                        msg = f"🏛️ *SECTOR CONVICTION ALERT*\n{msg}"
+                    if session_type == "LIVE":
+                        msg = f"🚀 *Nivo Sentinel:* Señal detectada en {symbol}\nMotivo: {reason}"
+                        if is_high_conviction:
+                            msg = f"🏛️ *SECTOR CONVICTION ALERT*\n{msg}"
 
-                    if self.autonomous_mode:
-                        self.notifier.send_alert(f"{msg}\n✅ *Ejecutando orden...*")
-                        self.executor.place_safe_order(symbol, qty=1)
+                        if self.autonomous_mode:
+                            self.notifier.send_alert(f"{msg}\n✅ *Ejecutando orden...*")
+                            self.executor.place_safe_order(symbol, qty=1)
+                        else:
+                            self.notifier.send_alert(f"{msg}\n⚠️ *Esperando validación.*")
+                            print(f"📡 Señal en {symbol} - Omitida (Modo Manual).")
                     else:
-                        self.notifier.send_alert(f"{msg}\n⚠️ *Esperando validación.*")
-                        print(f"📡 Señal en {symbol} - Omitida (Modo Manual).")
-                    
+                        print(f"⏳ SEÑAL NOCTURNA: Encolando {symbol} para apertura")
+                        self.order_queue.append(symbol)
+                        self.notifier.send_raw_message(f"🌑 <b>Análisis Nocturno:</b> Señal detectada en <b>{symbol}</b>. Encolada para apertura (9:30 AM).")
+                
             except Exception as e:
                 print(f"❌ Error analizando {symbol}: {e}")
+
+    def execute_queue(self):
+        """Ejecuta todas las órdenes acumuladas durante la noche."""
+        if not self.order_queue:
+            return
+            
+        print(f"🔥 Apertura de Mercado! Ejecutando cola de {len(self.order_queue)} órdenes...")
+        self.notifier.send_raw_message(f"🔥 <b>Market Open!</b> Ejecutando {len(self.order_queue)} órdenes encoladas.")
+        
+        for symbol in self.order_queue:
+            try:
+                self.executor.place_safe_order(symbol, qty=1)
+                time.sleep(1) # Simple rate limit
+            except Exception as e:
+                print(f"Error ejecutando cola para {symbol}: {e}")
+                
+        self.order_queue = [] # Clear queue
 
     def run(self):
         """Bucle principal de vigilancia"""

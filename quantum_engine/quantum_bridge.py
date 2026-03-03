@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import gc
+import os
+import json
 
 class QuantumBridge:
     def __init__(self):
@@ -10,6 +12,10 @@ class QuantumBridge:
         Integration layer for Nivo FX Intelligence Suite merging classical
         and quantum mathematical pipelines.
         """
+        # Self-Learning Logic
+        self.lessons_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lessons_learned.json")
+        self.feedback_data = self._load_learning_feedback()
+
         # Dictionary for Bilingual UI Compatibility
         self.ui_text = {
             "en": {
@@ -31,6 +37,16 @@ class QuantumBridge:
                 "final_q": "Puntuación Final Nivo Q"
             }
         }
+
+    def _load_learning_feedback(self):
+        """Loads recent performance metadata to adjust thresholds."""
+        if os.path.exists(self.lessons_path):
+            try:
+                with open(self.lessons_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                return None
+        return None
 
     def execute_pipeline(self, data: pd.DataFrame) -> dict:
         """
@@ -161,8 +177,19 @@ class QuantumBridge:
         final_diff = (base_diff + q_impact) * q_position_weight * reflex_mult
         
         # Map back to 0-100 range (50 is neutral)
-        final_score = 50.0 + final_diff
-        return float(np.clip(final_score, 0.0, 100.0))
+        actual_score = 50.0 + final_diff
+        
+        # --- 5. Self-Learning Adjustment ---
+        # If recent performance was bad, we apply a 'Safety Buffer' (dynamic thresholding)
+        learning_adj = 0.0
+        if self.feedback_data:
+            learning_adj = self.feedback_data.get("threshold_adjustment", 0.0)
+            
+        # Optimization: We only 'harden' the score if it was already close to a signal
+        # For example, if score is 60 and adjustment is 5, we make it 55 to filter it out.
+        adjusted_score = actual_score - learning_adj if actual_score > 50 else actual_score + learning_adj
+        
+        return float(np.clip(adjusted_score, 0.0, 100.0))
 
     def plot_bridge_convergence(self, history_df: pd.DataFrame, lang: str = "en") -> go.Figure:
         """
