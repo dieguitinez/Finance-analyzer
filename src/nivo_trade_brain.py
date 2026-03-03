@@ -155,7 +155,7 @@ class NivoTradeBrain:
         self.MAX_SELL = 40
         self.STRONG_SELL = 15
 
-        is_long = score_long >= score_short
+        is_long = score_long > score_short  # STRICT: no long bias on tied scores → WAIT
         # Directional Score: 50 is neutral. 
         # If long, score goes from 50 to 100. If short, score goes from 50 to 0.
         if is_long:

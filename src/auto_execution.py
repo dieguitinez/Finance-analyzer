@@ -271,45 +271,54 @@ class NivoAutoTrader:
             return False
 
     def close_all_positions(self):
-        """Emergency: Closes ALL open positions in the account."""
+        """Emergency: Closes ALL open positions in the account using direct REST API."""
         try:
-            logger.warning("🚨 [EMERGENCY] Closing ALL open positions...")
-            response = self.ctx.position.list_open(self.account_id)
-            positions = response.get("positions", 200)
+            logger.warning("🚨 [EMERGENCY] Closing ALL open positions via REST...")
+            
+            base_url = f"https://{self.hostname}"
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json"
+            }
+            
+            # Fetch all open positions
+            r = requests.get(
+                f"{base_url}/v3/accounts/{self.account_id}/openPositions",
+                headers=headers, timeout=10
+            )
+            positions = r.json().get("positions", [])
             
             if not positions:
                 return {"status": "success", "message": "No open positions found"}
-                
+            
             results = []
             for pos in positions:
-                instrument = pos.instrument
-                long_units = float(getattr(pos.long, "units", 0))
-                short_units = float(getattr(pos.short, "units", 0))
+                instrument = pos["instrument"]
+                long_units = float(pos["long"]["units"])
+                short_units = float(pos["short"]["units"])
                 
-                # To close, we need to send the opposite units
+                # Determine which side to close
                 if long_units > 0:
-                    units_to_close = -abs(long_units)
+                    body = {"longUnits": "ALL", "shortUnits": "NONE"}
                 elif short_units < 0:
-                    units_to_close = abs(short_units)
+                    body = {"longUnits": "NONE", "shortUnits": "ALL"}
                 else:
                     continue
                 
-                decimals = 3 if "JPY" in instrument else 5
-                pricing = self.ctx.pricing.get(self.account_id, instruments=instrument)
-                prices = pricing.get("prices")
-                current_price = float(prices[0].closeoutBid if units_to_close < 0 else prices[0].closeoutAsk)
-                
-                # Execute basic market order to flat
-                order_request = MarketOrderRequest(
-                    instrument=instrument,
-                    units=int(units_to_close)
+                res = requests.put(
+                    f"{base_url}/v3/accounts/{self.account_id}/positions/{instrument}/close",
+                    headers=headers, json=body, timeout=10
                 )
-                res = self.ctx.order.market(self.account_id, **order_request.dict())
-                results.append({"instrument": instrument, "status": res.status})
+                
+                tx = res.json().get("shortOrderFillTransaction") or res.json().get("longOrderFillTransaction") or {}
+                pl = float(tx.get("pl", 0)) if tx else 0.0
+                results.append({"instrument": instrument, "status": res.status_code, "pl": pl})
+                logger.info(f"[KILL] Closed {instrument}: HTTP {res.status_code} | PnL ${pl:+.2f}")
             
             return {"status": "success", "closed": results}
+            
         except Exception as e:
-            print(f"[ERROR] close_all_positions failed: {e}")
+            logger.error(f"[ERROR] close_all_positions failed: {e}")
             return {"status": "error", "message": str(e)}
 
     def calculate_position_size(self, stop_loss_pips):
