@@ -21,6 +21,7 @@ from src.data_engine import DataEngine, FundamentalEngine
 from src.notifications import NotificationManager
 from src.auto_execution import NivoAutoTrader
 from src.nivo_trade_brain import NivoTradeBrain
+from src.nivo_cortex import NivoCortex  # Right Hemisphere: HMM + LSTM + DOM Veto
 
 # Configure Headless Logging
 logging.basicConfig(
@@ -144,12 +145,50 @@ def run_headless_cycle():
             logger.warning("No data retrieved. Exiting array cycle.")
             sys.exit(0)
             
-        # 2. Hybrid Brain Analysis (Technical + Quantum)
-        logger.info("Initializing Technical Brain Analysis...")
+        # 2. LEFT HEMISPHERE: Technical Brain Analysis
+        logger.info("Initializing Technical Brain Analysis (Left Hemisphere)...")
         brain = NivoTradeBrain(df)
         brain_analysis = brain.analyze_market()
         
-        # 3. Instantiate Quantum Mathematical Modules
+        # 3. RIGHT HEMISPHERE: AI Cortex (HMM + LSTM + DOM)
+        logger.info("Initializing AI Cortex (Right Hemisphere: HMM + LSTM + DOM)...")
+        cortex = NivoCortex(
+            data=df,
+            oanda_token=_token,
+            oanda_id=_account
+        )
+        
+        # 3a. HMM Regime Detection
+        regime_id, regime_desc = cortex.hmm.detect_regime(df)
+        if regime_id == -1:
+            regime_id = 1  # Default to HIGH_VOLATILITY if HMM can't train (safe default)
+        logger.info(f"[RIGHT HEMISPHERE] HMM Regime: {regime_desc} (ID: {regime_id})")
+
+        # 3b. LSTM Direction Probability
+        _, lstm_prob = cortex.lstm.predict_next_move(df)  # returns (str, float 0-100)
+        logger.info(f"[RIGHT HEMISPHERE] LSTM Bull Probability: {lstm_prob:.1f}%")
+
+        # 3c. CORTEX VETO: Block trades in dangerous regimes (CRASH or HIGH VOLATILITY)
+        is_vetoed, veto_reason = cortex.evaluate_veto(df)
+        if is_vetoed:
+            logger.info(f"🛑 CORTEX VETO: {veto_reason} | No trade will be executed.")
+            tg_token_veto = os.getenv("TELEGRAM_BOT_TOKEN", "")
+            tg_chat_veto  = os.getenv("TELEGRAM_CHAT_ID", "")
+            if tg_token_veto and tg_chat_veto:
+                try:
+                    import requests as _req
+                    _req.post(
+                        f"https://api.telegram.org/bot{tg_token_veto}/sendMessage",
+                        json={"chat_id": tg_chat_veto, "text": f"🛑 <b>CORTEX VETO</b>\n{veto_reason}\nPar: {pair}", "parse_mode": "HTML"},
+                        timeout=5
+                    )
+                except Exception:
+                    pass
+            sys.exit(0)
+
+        logger.info(f"✅ Cortex Approved — proceding to QuantumBridge synthesis.")
+
+        # 4. Quantum Mathematical Modules
         q_bridge = QuantumBridge()
         guardian = CapitalGuardian(max_daily_loss_pct=-2.0, max_position_size=2.0)
         
@@ -160,19 +199,15 @@ def run_headless_cycle():
         _, legacy_fund = FundamentalEngine.get_pair_sentiment(pair)
         
         # Array Phase
-        logger.info("Engaging Quantum Bridge Tensors...")
+        logger.info("Engaging Quantum Bridge Tensors (Synthesis Layer)...")
         q_res = q_bridge.execute_pipeline(df)
         
-        # BUGFIX: 'regime_id' does not exist in execute_pipeline output.
-        # Derive it from 'hqmm_probs' using argmax (0=low_vol, 1=trending, 2=chaotic)
-        hqmm_probs = q_res.get('hqmm_probs', [0.33, 0.34, 0.33])
-        q_regime_state = int(np.argmax(hqmm_probs))
-
+        # Use real HMM regime_id + LSTM prob from NivoCortex (not simplified proxies)
         final_score = q_bridge.calculate_nivo_q_score(
             legacy_tech_score=legacy_tech,
             legacy_fund_score=legacy_fund,
-            q_regime_state=q_regime_state,
-            q_forecast_delta=q_res.get('qlstm_bull_prob', 0.5) * 100,
+            q_regime_state=regime_id,      # Real HMM result from NivoCortex
+            q_forecast_delta=lstm_prob,     # Real LSTM probability from NivoCortex
             q_position_weight=q_res.get('optimal_position_size', 1.0)
         )
         
