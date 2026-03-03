@@ -104,6 +104,29 @@ def run_headless_cycle():
     prices = None
         
     try:
+        # ---------------------------------------------------------------
+        # GLOBAL POSITION GUARD (CRITICAL FIX)
+        # Check ENTIRE account for ANY open position before doing anything.
+        # Uses direct REST API to avoid the v20 SDK ResponseUnexpectedStatus bug.
+        # ---------------------------------------------------------------
+        _token = os.getenv("OANDA_ACCESS_TOKEN", "")
+        _account = os.getenv("OANDA_ACCOUNT_ID", "")
+        _base_url = os.getenv("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
+        try:
+            _r = requests.get(
+                f"{_base_url}/v3/accounts/{_account}/openPositions",
+                headers={"Authorization": f"Bearer {_token}"},
+                timeout=5
+            )
+            _open_positions = _r.json().get("positions", [])
+            if len(_open_positions) > 0:
+                _pos_summary = ", ".join([p["instrument"] for p in _open_positions])
+                logger.info(f"⏭️ GLOBAL GUARD: {len(_open_positions)} posicion(es) abierta(s) detectada(s) [{_pos_summary}]. No se abrirán nuevas entradas.")
+                sys.exit(0)
+        except Exception as _guard_err:
+            logger.warning(f"⚠️ Global Guard check failed (proceeding cautiously): {_guard_err}")
+        # ---------------------------------------------------------------
+
         # Par configurable desde .env (por defecto EUR/USD)
         oanda_symbol = os.getenv("TRADING_PAIR", "EUR_USD")  # Formato OANDA: EUR_USD, GBP_USD, etc.
         pair = oanda_symbol.replace("_", "/")  # Para mostrar: EUR/USD
