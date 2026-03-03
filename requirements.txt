@@ -11,3 +11,4 @@ oandapyV20
 google-genai
 PyYAML
 requests
+alpaca-py
