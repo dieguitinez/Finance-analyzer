@@ -15,3 +15,6 @@ hmmlearn
 torch
 scikit-learn
 requests
+python-dotenv
+alpaca-py
+pandas-ta
