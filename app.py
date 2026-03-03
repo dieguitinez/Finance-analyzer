@@ -110,6 +110,7 @@ translations = {
         'tab_risk': "🛡️ Risk Management",
         'risk_guardian': "Capital Guardian Status",
         'tab_protocol': "📜 Intelligence Protocol",
+        'tab_stock': "🎯 AI Stock Sentinel",
         'lite_mode_warning': "⚡ LITE MODE ACTIVE: Heavy AI models (HMM/LSTM) are offloaded to your Linux server to save cloud memory.",
         'lite_mode_info': "Technical info available. Neural analysis restricted to Linux terminal.",
     },
@@ -150,6 +151,7 @@ translations = {
         'tab_risk': "🛡️ Gestión de Riesgos",
         'risk_guardian': "Estado del Guardián de Capital",
         'tab_protocol': "📜 Protocolo de Inteligencia",
+        'tab_stock': "🎯 AI Stock Sentinel",
         'lite_mode_warning': "⚡ MODO LITE ACTIVO: Los modelos pesados (HMM/LSTM) están corriendo en tu servidor Linux para ahorrar memoria en la web.",
         'lite_mode_info': "Información técnica disponible. Análisis neuronal restringido a la Terminal Linux.",
     }
@@ -262,9 +264,9 @@ else:
     st.session_state.last_fetch_ts = current_fetch_ts
     needs_ai_recalc = True
 
-tab1, tab_q, tab_f, tab_r, tab_k, tab_charts, tab_p = st.tabs([
+tab1, tab_q, tab_f, tab_r, tab_k, tab_charts, tab_s, tab_p = st.tabs([
     t['tab_tech'], t['tab_quantum'], t['tab_fund'], t['tab_risk'], 
-    t['tab_kai'], "📊 Charts", t['tab_glossary']
+    t['tab_kai'], "📊 Charts", t['tab_stock'], t['tab_glossary']
 ])
 
 with tab1:
@@ -606,6 +608,55 @@ with tab_r:
                 else: st.info("No hay posiciones abiertas.")
             except Exception as e: st.error(f"Error: {e}")
         else: st.info("Conecte OANDA para ver posiciones.")
+
+with tab_s:
+    st.markdown(f"### {t['tab_stock']}")
+    
+    # 🏛️ Alpaca Account Intelligence
+    alp_key = st.secrets.get("alpaca_api_key", os.getenv("ALPACA_API_KEY"))
+    alp_secret = st.secrets.get("alpaca_secret_key", os.getenv("ALPACA_SECRET_KEY"))
+    
+    if alp_key and alp_secret:
+        try:
+            from alpaca.trading.client import TradingClient
+            from alpaca.data.historical import StockHistoricalDataClient
+            from alpaca.data.requests import StockLatestQuoteRequest
+            
+            paper = os.getenv("ALPACA_PAPER", "True") == "True"
+            trade_client = TradingClient(alp_key, alp_secret, paper=paper)
+            data_client = StockHistoricalDataClient(alp_key, alp_secret)
+            acc = trade_client.get_account()
+            
+            # Metrics Row
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Account Value", f"${float(acc.equity):,.2f}")
+            m2.metric("Buying Power", f"${float(acc.buying_power):,.2f}")
+            m3.metric("Daily PnL", f"${float(acc.equity) - float(acc.last_equity):,.2f}", 
+                      delta=f"{(float(acc.equity)/float(acc.last_equity)-1)*100:.2f}%")
+            m4.status("Sentinel Engine", state="running" if acc.status == "ACTIVE" else "error")
+
+            # 🐋 Whale Detector & Watchlist
+            st.markdown("#### 📡 Real-Time Sentinel Monitor")
+            watchlist = os.getenv("STOCK_WATCHLIST", "NVDA,TSM,ASML,ARM,AVGO").split(',')
+            
+            stock_data = []
+            for sym in watchlist:
+                try:
+                    q = data_client.get_stock_latest_quote(StockLatestQuoteRequest(symbol_or_symbols=sym))
+                    price = q[sym].ask_price
+                    # Simulación de indicadores para la UI (en el bot real corre el cerebro técnico)
+                    stock_data.append({"Ticker": sym, "Last Price": f"${price:.2f}", "Institutional Footprint": "🔍 Vigilando"})
+                except: pass
+            
+            if stock_data:
+                st.table(pd.DataFrame(stock_data))
+            
+            st.info("💡 El bot completo corre en segundo plano en tu servidor Linux con el Whale Detector activo.")
+            
+        except Exception as e:
+            st.error(f"Error conectando a Alpaca: {e}")
+    else:
+        st.warning("⚠️ Configura tus llaves de Alpaca en secrets o .env para activar este panel.")
 
 # --- Financial Disclaimer Footer ---
 st.divider()
