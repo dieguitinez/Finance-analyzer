@@ -68,7 +68,8 @@ class NivoTelegramBot:
             self.send_message(help_text)
 
         elif command == "/dashboard":
-            self.send_message("🌐 <b>Dashboard En Vivo:</b>\nhttps://finance-analyzer-fx.streamlit.app/")
+            dashboard_url = os.getenv("DASHBOARD_URL", "https://finance-analyzer-fx.streamlit.app/")
+            self.send_message(f"🌐 <b>Dashboard En Vivo:</b>\n{dashboard_url}")
 
         elif command == "/oanda":
             self.send_message("🏦 <b>OANDA Hub:</b>\nhttps://hub.oanda.com/")

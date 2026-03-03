@@ -14,8 +14,8 @@ class StockTelegramNotifier:
         if not self.enabled:
             print("⚠️ Telegram Notifier desactivado: Faltan llaves en .env")
 
-    def send_alert(self, message: str):
-        """Envía una alerta formateada a Telegram"""
+    def send_raw_message(self, message: str, parse_mode: str = "HTML"):
+        """Envía un mensaje directamente a Telegram."""
         if not self.enabled:
             return
             
@@ -23,15 +23,19 @@ class StockTelegramNotifier:
         payload = {
             "chat_id": self.chat_id,
             "text": message,
-            "parse_mode": "Markdown"
+            "parse_mode": parse_mode
         }
         
         try:
-            response = requests.post(url, json=payload, timeout=10)
-            if response.status_code != 200:
-                print(f"❌ Error enviando a Telegram: {response.text}")
+            requests.post(url, json=payload, timeout=10)
         except Exception as e:
-            print(f"❌ Fallo de conexión con Telegram: {e}")
+            print(f"❌ Error enviando mensaje a Telegram: {e}")
+
+    def send_alert(self, message: str):
+        """Envía una alerta formateada a Telegram con link al Dashboard"""
+        dashboard_url = "https://app.alpaca.markets/paper/dashboard"
+        formatted_msg = f"{message}\n\n📊 <a href='{dashboard_url}'>Ver en Alpaca Dashboard</a>"
+        self.send_raw_message(formatted_msg)
 
     def notify_market_scan(self, symbol, price, change=None):
         """Notifica un movimiento interesante"""

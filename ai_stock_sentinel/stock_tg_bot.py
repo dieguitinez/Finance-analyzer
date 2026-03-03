@@ -47,6 +47,9 @@ class NivoStockBot:
     def handle_command(self, command, args=[]):
         command = command.lower()
         
+        # Dashboard URL (Alpaca Paper)
+        dashboard_url = "https://app.alpaca.markets/paper/dashboard"
+
         if command in ["/start", "/help", "/ayuda"]:
             help_text = (
                 "🤖 <b>Nivo Stock Sentinel - Command Center</b>\n"
@@ -55,11 +58,16 @@ class NivoStockBot:
                 "🔹 /status - Ver posiciones abiertas en Alpaca\n"
                 "🔹 /saldo - Balance y poder de compra\n"
                 "🔹 /watchlist - Ver las 15 acciones vigiladas\n"
+                "🔹 /dashboard - Link a Alpaca Dashboard\n"
                 "🔹 /ayuda - Mostrar este mensaje\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
+                f"🌐 <a href='{dashboard_url}'>Alpaca Web Console</a>\n\n"
                 "<i>Nivo Partners Stock Intelligence</i>"
             )
             self.send_message(help_text)
+
+        elif command == "/dashboard":
+            self.send_message(f"📊 <b>Alpaca Web Dashboard:</b>\n{dashboard_url}")
 
         elif command == "/saldo":
             if not self.trading_client:

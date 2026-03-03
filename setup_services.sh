@@ -14,8 +14,8 @@ if command -v sed &> /dev/null; then
 fi
 
 PROJECT_DIR="/home/diego/nivo_fx"
-SERVICES=("nivo-bot.service" "nivo-sentinel.service")
-TIMER="nivo-sentinel.timer"
+SERVICES=("nivo-sentinel.service" "nivo-bot.service" "nivo-stock-bot.service" "nivo-watchdog.service")
+TIMERS=("nivo-sentinel.timer")
 
 echo "🎯 Starting Nivo FX Service Setup..."
 
