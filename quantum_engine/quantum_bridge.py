@@ -112,7 +112,8 @@ class QuantumBridge:
             result = {
                 'quantum_multiplier': round(float(q_multiplier), 4),
                 'hqmm_probs': [round(p, 4) for p in hqmm_probs],
-                'qlstm_bull_prob': round(bull_prob, 4),
+                # ✅ FIX: Return in 0-100 scale (was 0-1) to match expected scale in calculate_nivo_q_score
+                'qlstm_bull_prob': round(bull_prob * 100, 2),
                 'optimal_position_size': round(position_size, 4),
             }
             

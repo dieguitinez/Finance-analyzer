@@ -500,12 +500,18 @@ if __name__ == "__main__":
             q_res = q_bridge.execute_pipeline(df)
             q_multiplier = q_res.get("quantum_multiplier", 1.0)
 
+            # ✅ FIX: Use REAL HMM regime + REAL trained LSTM probability (0-100 scale)
+            # Previously used EMA proxy (0-1 scale) → caused q_diff = -49.5 destroying all bull scores
+            # q_position_weight now derived from real LSTM conviction distance from 50
+            lstm_conviction = abs(lstm_prob - 50.0) / 50.0  # 0.0-1.0
+            q_position_weight = float(np.clip(q_multiplier * (1.0 + lstm_conviction), 0.25, 2.0))
+
             final_score = q_bridge.calculate_nivo_q_score(
                 legacy_tech_score=tech_score,
                 legacy_fund_score=fund_sentiment,
-                q_regime_state=q_res.get("hqmm_probs", [0.5, 0.3, 0.2]).index(max(q_res.get("hqmm_probs", [0.5, 0.3, 0.2]))),
-                q_forecast_delta=q_res.get("qlstm_bull_prob", 50.0),
-                q_position_weight=q_res.get("optimal_position_size", 1.0)
+                q_regime_state=hmm_regime_id,        # ✅ Real HMM (not EMA proxy index)
+                q_forecast_delta=lstm_prob,           # ✅ Real LSTM 0-100 scale (not EMA 0-1)
+                q_position_weight=q_position_weight   # ✅ Real conviction-based weight
             )
 
             raw_signal = "BUY" if final_score > 60.0 else "SELL" if final_score < 40.0 else "WAIT"
@@ -519,8 +525,9 @@ if __name__ == "__main__":
                 "left_hemisphere": {
                     "tech_score": round(tech_score, 2),
                     "signal": tech_signal,
-                    "rsi": round(float(tech_details.get("rsi", 0)), 2) if tech_details else "N/A",
-                    "macd_signal": str(tech_details.get("macd_signal", "N/A")) if tech_details else "N/A",
+                    # ✅ FIX: Read RSI/MACD directly from the computed df columns (always available)
+                    "rsi": round(float(brain.df['RSI'].iloc[-1]), 2) if not pd.isna(brain.df['RSI'].iloc[-1]) else "N/A",
+                    "macd_signal": "Bullish" if brain.df['MACD'].iloc[-1] > brain.df['MACD_Signal'].iloc[-1] else "Bearish",
                 },
                 "right_hemisphere": {
                     "hmm_regime": hmm_label,
