@@ -9,6 +9,8 @@ User=diego
 WorkingDirectory=/home/diego/nivo_fx/
 Environment="PATH=/home/diego/nivo_fx/.venv/bin"
 Environment="PYTHONPATH=/home/diego/nivo_fx"
+Environment="LOKY_MAX_CPU_COUNT=1"
+Environment="JOBLIB_MULTIPROCESSING=0"
 ExecStart=/home/diego/nivo_fx/.venv/bin/python quantum_engine/market_sentinel.py
 
 [Install]
