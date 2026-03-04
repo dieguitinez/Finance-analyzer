@@ -113,6 +113,9 @@ def run_headless_cycle():
         _token = os.getenv("OANDA_ACCESS_TOKEN", "")
         _account = os.getenv("OANDA_ACCOUNT_ID", "")
         _base_url = os.getenv("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
+        _tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        _tg_chat  = os.getenv("TELEGRAM_CHAT_ID", "")
+        _pos_cache_path = "/tmp/nivo_open_positions.json"
         try:
             _r = requests.get(
                 f"{_base_url}/v3/accounts/{_account}/openPositions",
@@ -124,6 +127,53 @@ def run_headless_cycle():
             if _open_instruments:
                 _pos_summary = ", ".join(_open_instruments)
                 logger.info(f"📊 POSICIONES ABIERTAS: [{_pos_summary}] — Análisis continúa. Ejecución bloqueada para pares activos.")
+
+            # --- TRAILING STOP CLOSE DETECTION ---
+            # Compare current positions against previous cycle's snapshot.
+            # If a position disappeared → OANDA closed it automatically (trailing stop or SL hit).
+            try:
+                if os.path.exists(_pos_cache_path):
+                    _prev_cache = json.loads(open(_pos_cache_path).read())
+                    _prev_instruments = set(_prev_cache.keys())
+                    _curr_instruments = set(_open_instruments)
+                    _closed_by_ts = _prev_instruments - _curr_instruments
+                    for _closed_pair in _closed_by_ts:
+                        _prev = _prev_cache[_closed_pair]
+                        logger.info(f"[TS CLOSE DETECTED] {_closed_pair} no longer in openPositions — likely closed by trailing stop.")
+                        NotificationManager.trailing_stop_close_report(
+                            pair=_closed_pair.replace("_", "/"),
+                            units=_prev.get("units", 0),
+                            entry_price=_prev.get("entry_price", 0.0),
+                            close_price=_prev.get("current_price", 0.0),
+                            pnl_usd=_prev.get("pnl_usd", 0.0),
+                            pips=_prev.get("pips", 0.0),
+                            token=_tg_token,
+                            chat_id=_tg_chat
+                        )
+            except Exception as _ts_detect_err:
+                logger.warning(f"[TS CLOSE DETECTION] Cache check failed (non-critical): {_ts_detect_err}")
+
+            # Save current open positions snapshot for next cycle comparison
+            try:
+                _pos_snapshot = {}
+                for _pos in _open_positions:
+                    _instr = _pos["instrument"]
+                    _long_u  = float(_pos.get("long", {}).get("units", 0))
+                    _short_u = float(_pos.get("short", {}).get("units", 0))
+                    _units   = _long_u if _long_u != 0 else _short_u
+                    _avg_px  = float(_pos.get("long" if _long_u != 0 else "short", {}).get("averagePrice", 0))
+                    _unreal  = float(_pos.get("unrealizedPL", 0))
+                    _pos_snapshot[_instr] = {
+                        "units": _units,
+                        "entry_price": _avg_px,
+                        "current_price": _avg_px,  # best available without extra API call
+                        "pnl_usd": _unreal,
+                        "pips": 0.0  # approximate — will not be precise but gives context
+                    }
+                open(_pos_cache_path, "w").write(json.dumps(_pos_snapshot))
+            except Exception as _snap_err:
+                logger.warning(f"[TS CLOSE DETECTION] Could not save position snapshot: {_snap_err}")
+
         except Exception as _guard_err:
             _open_instruments = []
             logger.warning(f"⚠️ Global Guard check failed (proceeding cautiously): {_guard_err}")
