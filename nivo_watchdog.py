@@ -26,7 +26,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 LOG_FILES = [
     os.path.join("quantum_engine", "sentinel.log"),
     os.path.join("ai_stock_sentinel", "sentinel.log"),
-    "stock_sentinel.service_output.log"
+    "stock-watcher.service_output.log"
 ]
 
 def send_critical_alert(message):
