@@ -166,11 +166,13 @@ class QuantumBridge:
         # --- 3. Quantum Phase Integration ---
         q_diff = q_forecast_delta - 50.0
         if q_regime_state == 0:
-            # Ranging: dampen quantum forecast to protect against noise
-            q_impact = q_diff * 0.2
-            base_diff *= 0.8
+            # Low Volatility (most bullish regime): keep base_diff intact.
+            # Only dampen the noisy quantum component to avoid overreacting to calm markets.
+            # BUG FIX: Previously applied base_diff *= 0.8 here which artificially
+            # suppressed bullish scores in the calmest regime → SELL bias introduced.
+            q_impact = q_diff * 0.3
         else:
-            # Trending: boost quantum impact
+            # Trending / Crash regime: boost quantum impact for stronger conviction
             q_impact = q_diff * 0.7
             
         # --- 4. Final Aggregation & Weighting ---

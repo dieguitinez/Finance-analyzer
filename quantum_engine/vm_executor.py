@@ -169,7 +169,8 @@ def run_headless_cycle():
 
         # 3b. LSTM Direction Probability
         _, lstm_prob = cortex.lstm.predict_next_move(df)  # returns (str, float 0-100)
-        logger.info(f"[RIGHT HEMISPHERE] LSTM Bull Probability: {lstm_prob:.1f}%")
+        lstm_status_badge = "✅ Trained" if cortex.lstm.is_trained else "⚠️ Random Weights"
+        logger.info(f"[RIGHT HEMISPHERE] LSTM Bull Probability: {lstm_prob:.1f}% [{lstm_status_badge}]")
 
         # 3c. CORTEX VETO: Block trades in dangerous regimes (CRASH or HIGH VOLATILITY)
         is_vetoed, veto_reason = cortex.evaluate_veto(df)
@@ -354,10 +355,38 @@ def run_headless_cycle():
         # OANDA v20 Protocol: Positive units for LONG, Negative for SHORT
         units_base = int(10000 * (capped_weight if 'capped_weight' in locals() else 1.0))
         trade_units = units_base if final_signal == "BUY" else -abs(units_base)
-        
+
+        # --- SL < SPREAD REJECTION FIX ---
+        # Validate the SL is safely outside the current OANDA spread before submitting.
+        # Prevents STOP_LOSS_ON_FILL_LOSS rejections when ATR-derived SL lands inside the spread.
+        try:
+            _pricing_r = requests.get(
+                f"{_base_url}/v3/accounts/{_account}/pricing?instruments={oanda_symbol}",
+                headers={"Authorization": f"Bearer {_token}"},
+                timeout=5
+            )
+            _price_data = _pricing_r.json().get("prices", [{}])[0]
+            _ask = float(_price_data.get("asks", [{}])[0].get("price", current_price))
+            _bid = float(_price_data.get("bids", [{}])[0].get("price", current_price))
+            _spread = abs(_ask - _bid)
+            _min_sl_dist = _spread * 1.5  # SL must be at least 1.5x the spread away
+
+            if final_signal == "BUY":
+                _actual_sl_dist = abs(current_price - sl_price)
+                if _actual_sl_dist < _min_sl_dist:
+                    sl_price = _bid - _min_sl_dist
+                    logger.info(f"[SL SPREAD FIX] SL adjusted to {sl_price:.5f} (was too close to spread: {_spread:.5f})")
+            else:  # SELL
+                _actual_sl_dist = abs(sl_price - current_price)
+                if _actual_sl_dist < _min_sl_dist:
+                    sl_price = _ask + _min_sl_dist
+                    logger.info(f"[SL SPREAD FIX] SL adjusted to {sl_price:.5f} (was too close to spread: {_spread:.5f})")
+        except Exception as _spread_err:
+            logger.warning(f"[SL SPREAD FIX] Could not validate spread (proceeding with original SL): {_spread_err}")
+
         trader.execute_trade(
-            instrument=oanda_symbol, 
-            units=trade_units, 
+            instrument=oanda_symbol,
+            units=trade_units,
             stop_loss_price=sl_price,
             trailing_stop_distance=ts_distance
         )

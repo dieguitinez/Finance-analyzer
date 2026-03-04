@@ -187,6 +187,34 @@ class NotificationManager:
         return NotificationManager.send_telegram(msg, token, chat_id)
 
     @staticmethod
+    def trailing_stop_close_report(pair, units, entry_price, close_price, pnl_usd, pips, token, chat_id):
+        """
+        Notifica cuando el trailing stop cierra automáticamente una posición.
+        Llamado por vm_executor cuando detecta que una posición ya no existe.
+        """
+        oanda_link = "https://trade.oanda.com/"
+        pl_icon = "✅" if pnl_usd >= 0 else "🔴"
+        direction = "📈 LONG" if float(units) > 0 else "📉 SHORT"
+
+        msg = (
+            f"{pl_icon} <b>TRAILING STOP — CIERRE AUTOMÁTICO</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 <b>Par:</b> {pair}\n"
+            f"🏗️ <b>Dirección:</b> {direction}\n"
+            f"🏁 <b>Entrada:</b> {entry_price:.5f}\n"
+            f"🚪 <b>Cierre (TS):</b> {close_price:.5f}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📈 <b>Pips Realizados:</b> {pips:+.1f} pips\n"
+            f"💵 <b>PnL Realizado:</b> <b>${pnl_usd:+.2f} USD</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🤖 <i>Cerrado automáticamente por Trailing Stop</i>\n"
+            f"📲 <a href='{oanda_link}'>Ver en OANDA</a>"
+        )
+        return NotificationManager.send_telegram(msg, token, chat_id)
+
+
+
+    @staticmethod
     def trade_execution_report(pair, action, units, order_id, token, chat_id):
         """
         Confirma la ejecucion real en el broker con el ID de transaccion.
