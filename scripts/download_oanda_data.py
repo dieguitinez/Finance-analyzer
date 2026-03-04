@@ -1,8 +1,9 @@
 """
 Nivo FX — OANDA Historical Data Downloader
 ==========================================
-Downloads 2 years of H1 (hourly) candle data for the 4 Major pairs.
+Downloads 2 years of H1 (hourly) candle data for all 15 monitored pairs.
 Saves as CSV files in scripts/data/ for LSTM training.
+After training, CSVs can be safely deleted (only .pth files are needed for inference).
 
 Usage (run from project root on Linux server):
     cd /home/diego/nivo_fx
@@ -25,8 +26,17 @@ TOKEN    = os.getenv("OANDA_ACCESS_TOKEN")
 BASE_URL = os.getenv("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
 HEADERS  = {"Authorization": f"Bearer {TOKEN}"}
 
-# 4 Major pairs — reduce risk while bot is being validated
-PAIRS = ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD"]
+# All 15 pairs monitored by the sentinel
+PAIRS = [
+    # Majors (trained before)
+    "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD",
+    # Additional majors
+    "USD_CAD", "USD_CHF", "NZD_USD",
+    # JPY crosses
+    "EUR_JPY", "GBP_JPY", "AUD_JPY", "NZD_JPY", "CHF_JPY",
+    # Other crosses
+    "EUR_GBP", "EUR_CHF", "EUR_AUD",
+]
 
 TIMEFRAME   = "H1"          # Hourly candles
 YEARS_BACK  = 2             # 2 years of history

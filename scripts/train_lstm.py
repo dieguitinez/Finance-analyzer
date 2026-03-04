@@ -13,10 +13,8 @@ Usage (run from project root on Linux server):
     python3 scripts/train_lstm.py
 
 Output:
-    scripts/data/lstm_EUR_USD.pth
-    scripts/data/lstm_GBP_USD.pth
-    scripts/data/lstm_USD_JPY.pth
-    scripts/data/lstm_AUD_USD.pth
+    scripts/data/lstm_EUR_USD.pth ... (one per pair, 15 total)
+    CSVs can be deleted after training to save disk space.
 """
 
 import os
@@ -34,7 +32,15 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 DATA_DIR   = os.path.join(os.path.dirname(__file__), "data")
-PAIRS      = ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD"]
+PAIRS = [
+    # Majors
+    "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD",
+    "USD_CAD", "USD_CHF", "NZD_USD",
+    # JPY crosses
+    "EUR_JPY", "GBP_JPY", "AUD_JPY", "NZD_JPY", "CHF_JPY",
+    # Other crosses
+    "EUR_GBP", "EUR_CHF", "EUR_AUD",
+]
 
 # ─── Hyperparameters ──────────────────────────────────────────────────────────
 SEQ_LEN    = 60    # Use 60 hours of history to predict next direction
