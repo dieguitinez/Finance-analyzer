@@ -203,15 +203,14 @@ def run_headless_cycle():
         logger.info("Engaging Quantum Bridge Tensors (Synthesis Layer)...")
         q_res = q_bridge.execute_pipeline(df)
         
-        # Use real HMM regime_id from NivoCortex, but EMA-based qlstm_bull_prob from QuantumBridge
-        # NOTE: NivoCortex LSTM uses random weights (untrained) → its bull_prob is noise.
-        # QuantumBridge qlstm_bull_prob uses EMA 12 vs EMA 26 momentum → directionally accurate.
-        # Once LSTM is trained on real data, swap back to lstm_prob here.
+        # Use real HMM regime_id + REAL trained LSTM probability
+        # ✅ LSTM is now trained on 2 years of OANDA H1 data (.pth weights loaded above)
+        # ✅ lstm_prob now reflects genuine AI-learned momentum patterns
         final_score = q_bridge.calculate_nivo_q_score(
             legacy_tech_score=legacy_tech,
             legacy_fund_score=legacy_fund,
             q_regime_state=regime_id,                          # Real HMM from NivoCortex ✅
-            q_forecast_delta=q_res.get('qlstm_bull_prob', 0.5) * 100,  # EMA momentum proxy ✅
+            q_forecast_delta=lstm_prob,                         # Real trained LSTM ✅ (was EMA proxy)
             q_position_weight=q_res.get('optimal_position_size', 1.0)
         )
         
