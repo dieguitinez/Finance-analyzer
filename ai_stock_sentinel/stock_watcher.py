@@ -125,24 +125,38 @@ class NivoStockWatcher:
                 
                 # 3. Ejecución con Filtro de Convicción y Horario
                 if signal:
+                    from alpaca.trading.enums import OrderSide
+                    side = OrderSide.BUY if signal == "BUY" else OrderSide.SELL
+                    
+                    # Calcular Bracket (2% SL, 5% TP)
+                    if signal == "BUY":
+                        sl_price = round(current_price * 0.98, 2)
+                        tp_price = round(current_price * 1.05, 2)
+                    else:
+                        sl_price = round(current_price * 1.02, 2)
+                        tp_price = round(current_price * 0.95, 2)
+
                     # Si ASML también está fuerte (o si es ASML mismo), la señal es más potente
                     is_high_conviction = sector_conviction or symbol == "ASML"
                     
                     if session_type == "LIVE":
-                        msg = f"🚀 *Nivo Sentinel:* Señal detectada en {symbol}\nMotivo: {reason}"
+                        icon = "🚀" if signal == "BUY" else "🔻"
+                        msg = f"{icon} *Nivo Sentinel:* Señal {signal} detectada en {symbol}\nMotivo: {reason}"
                         if is_high_conviction:
                             msg = f"🏛️ *SECTOR CONVICTION ALERT*\n{msg}"
 
+                        msg += f"\n🛡️ *Safety:* SL: {sl_price} | TP: {tp_price}"
+
                         if self.autonomous_mode:
-                            self.notifier.send_alert(f"{msg}\n✅ *Ejecutando orden...*")
-                            self.executor.place_safe_order(symbol, qty=1)
+                            self.notifier.send_alert(f"{msg}\n✅ *Ejecutando orden con Bracket...*")
+                            self.executor.place_safe_order(symbol, qty=1, side=side, tp_price=tp_price, sl_price=sl_price)
                         else:
-                            self.notifier.send_alert(f"{msg}\n⚠️ *Esperando validación.*")
+                            self.notifier.send_alert(f"{msg}\n⚠️ *Esperando validación (Modo Manual).*")
                             print(f"📡 Señal en {symbol} - Omitida (Modo Manual).")
                     else:
-                        print(f"⏳ SEÑAL NOCTURNA: Encolando {symbol} para apertura")
-                        self.order_queue.append(symbol)
-                        self.notifier.send_raw_message(f"🌑 <b>Análisis Nocturno:</b> Señal detectada en <b>{symbol}</b>. Encolada para apertura (9:30 AM).")
+                        print(f"⏳ SEÑAL NOCTURNA: Encolando {signal} para {symbol}")
+                        self.order_queue.append({"symbol": symbol, "side": side, "tp": tp_price, "sl": sl_price})
+                        self.notifier.send_raw_message(f"🌑 <b>Análisis Nocturno:</b> Señal <b>{signal}</b> detectada en <b>{symbol}</b>. Encolada para apertura (9:30 AM).")
                 
             except Exception as e:
                 print(f"❌ Error analizando {symbol}: {e}")
@@ -155,12 +169,18 @@ class NivoStockWatcher:
         print(f"🔥 Apertura de Mercado! Ejecutando cola de {len(self.order_queue)} órdenes...")
         self.notifier.send_raw_message(f"🔥 <b>Market Open!</b> Ejecutando {len(self.order_queue)} órdenes encoladas.")
         
-        for symbol in self.order_queue:
+        for item in self.order_queue:
             try:
-                self.executor.place_safe_order(symbol, qty=1)
+                self.executor.place_safe_order(
+                    item["symbol"], 
+                    qty=1, 
+                    side=item["side"], 
+                    tp_price=item["tp"], 
+                    sl_price=item["sl"]
+                )
                 time.sleep(1) # Simple rate limit
             except Exception as e:
-                print(f"Error ejecutando cola para {symbol}: {e}")
+                print(f"Error ejecutando cola para {item['symbol']}: {e}")
                 
         self.order_queue = [] # Clear queue
 

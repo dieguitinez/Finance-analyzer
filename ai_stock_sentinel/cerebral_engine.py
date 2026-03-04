@@ -8,9 +8,10 @@ class StockCerebralEngine:
     def analyze_momentum(self, df, symbol=""):
         """
         Analiza si hay una 'Explosión de Momentum' con 'Huella de Ballena'.
+        Returns (signal, reason) where signal is 'BUY', 'SELL' or None.
         """
         if len(df) < 50:
-            return False, "Datos insuficientes"
+            return None, "Datos insuficientes"
 
         # 1. Indicadores Técnicos
         df['ema_20'] = ta.ema(df['close'], length=20)
@@ -25,17 +26,27 @@ class StockCerebralEngine:
         # Solo entramos si el volumen es al menos 2.5x el promedio reciente
         is_whale_present = current_volume > (avg_volume * 2.5)
         
-        # 3. Lógica de "Hemisferio Izquierdo"
-        is_bullish = current_price > df['ema_20'].iloc[-1]
-        is_not_overbought = current_rsi < 68 # Un poco más conservativo (Institucional)
+        # 3. Lógica Direccional
+        ema_20 = df['ema_20'].iloc[-1]
+        is_bullish = current_price > ema_20
+        is_bearish = current_price < ema_20
+        
+        # Filtros RSI
+        is_not_overbought = current_rsi < 68 
+        is_not_oversold = current_rsi > 32
 
         # 4. Análisis Especial ASML (Indicador Adelantado)
         if symbol == "ASML":
             if is_bullish and is_whale_present:
-                return True, "🏛️ SECTOR LEADER SIGNAL: ASML subiendo con volumen masivo. Posible movimiento en cadena."
+                return "BUY", "🏛️ SECTOR LEADER (BULLISH): ASML liderando hacia arriba con volumen masivo."
+            if is_bearish and is_whale_present:
+                return "SELL", "🏛️ SECTOR LEADER (BEARISH): ASML rompiendo hacia abajo con volumen masivo."
 
         # 5. Veredicto Final
-        if is_bullish and is_whale_present and is_not_overbought:
-            return True, f"🐋 WHALE DETECTED: RSI {current_rsi:.1f}, Vol: {current_volume/avg_volume:.1f}x avg"
+        if is_whale_present:
+            if is_bullish and is_not_overbought:
+                return "BUY", f"🐋 WHALE BUY: RSI {current_rsi:.1f}, Vol: {current_volume/avg_volume:.1f}x avg"
+            if is_bearish and is_not_oversold:
+                return "SELL", f"🐋 WHALE SELL: RSI {current_rsi:.1f}, Vol: {current_volume/avg_volume:.1f}x avg"
         
-        return False, "Vigilancia normal (Sin huella institucional)"
+        return None, "Vigilancia normal (Sin huella institucional)"
