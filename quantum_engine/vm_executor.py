@@ -155,7 +155,8 @@ def run_headless_cycle():
         cortex = NivoCortex(
             data=df,
             oanda_token=_token,
-            oanda_id=_account
+            oanda_id=_account,
+            pair=pair  # Enables auto-loading of trained .pth weights
         )
         
         # 3a. HMM Regime Detection

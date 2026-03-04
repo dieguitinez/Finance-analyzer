@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 try:
@@ -160,10 +161,34 @@ class NivoLSTM:
     LSTM predictor wrapper.
     Provides predict_next_move(df) -> (status_str, probability_float)
     which is what app.py calls via cortex.lstm.predict_next_move(data).
+    Auto-loads trained weights from scripts/data/lstm_{pair}.pth if available.
     """
-    def __init__(self):
+    def __init__(self, pair: str = ""):
         self.model = CPUOptimizedLSTM()
+        self.is_trained = False
+        self.pair = pair
+
+        # Try to load pre-trained weights for this pair
+        if pair:
+            _script_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "scripts", "data"
+            )
+            weights_path = os.path.join(_script_dir, f"lstm_{pair}.pth")
+            if os.path.exists(weights_path):
+                try:
+                    state_dict = torch.load(weights_path, map_location="cpu")
+                    self.model.load_state_dict(state_dict)
+                    self.is_trained = True
+                    print(f"[NivoLSTM] ✅ Loaded trained weights for {pair}")
+                except Exception as e:
+                    print(f"[NivoLSTM] ⚠️ Could not load weights for {pair}: {e} — using random weights")
+            else:
+                print(f"[NivoLSTM] ℹ️ No trained weights found for {pair} — using random weights")
+                print(f"             Run: python3 scripts/train_lstm.py to train")
+
         self.model.eval()
+
 
     def predict_next_move(self, df: pd.DataFrame):
         """
@@ -284,14 +309,14 @@ class NivoCortex:
         cortex.lstm.predict_next_move(data)           -> (str, float)
         cortex.analyze_order_book(symbol)             -> dict
     """
-    def __init__(self, data: pd.DataFrame = None, oanda_token: str = "", oanda_id: str = ""):
+    def __init__(self, data: pd.DataFrame = None, oanda_token: str = "", oanda_id: str = "", pair: str = ""):
         self.data = data
         self.oanda_token = oanda_token
         self.oanda_id = oanda_id
 
         # Sub-modules accessible as attributes
         self.hmm = MarketRegimeDetector()
-        self.lstm = NivoLSTM()
+        self.lstm = NivoLSTM(pair=pair)  # Loads trained .pth if available
         self.order_book = OrderBookAnalyzer(oanda_token, oanda_id)
 
         # Auto-train HMM if data provided
