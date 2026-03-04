@@ -123,37 +123,21 @@ class MarketRegimeDetector:
 # 2. CPUOptimizedLSTM (PyTorch Neural Net)
 # ============================================================================
 class CPUOptimizedLSTM(nn.Module):
-    """Lightweight LSTM architecture for CPU execution."""
-    def __init__(self, input_size=1, hidden_layer_size=32, output_size=1):
-        super(CPUOptimizedLSTM, self).__init__()
-        self.input_size = input_size
-        self.hidden_layer_size = hidden_layer_size
-        self.lstm = nn.LSTM(input_size, hidden_layer_size, batch_first=True)
-        self.linear = nn.Linear(hidden_layer_size, output_size)
+    """
+    LSTM architecture — must exactly match scripts/train_lstm.py.
+    input_size=5  (open_r, high_r, low_r, close_r, vol_n)
+    hidden_size=64, num_layers=2, dropout=0.2, fc + sigmoid output.
+    """
+    def __init__(self, input_size=5, hidden_size=64, num_layers=2, output_size=1):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.2)
+        self.fc   = nn.Linear(hidden_size, output_size)
+        self.sigmoid = nn.Sigmoid()
 
-    def forward(self, input_seq):
-        # Convert to float32 tensor
-        if not isinstance(input_seq, torch.Tensor):
-            input_seq = torch.tensor(input_seq, dtype=torch.float32)
-        else:
-            input_seq = input_seq.float()
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        return self.sigmoid(self.fc(out[:, -1, :]))
 
-        if input_seq.dim() == 4:
-            input_seq = input_seq.squeeze()
-        
-        if input_seq.dim() == 1:
-            input_seq = input_seq.view(1, -1, self.input_size)
-        elif input_seq.dim() == 2:
-            input_seq = input_seq.unsqueeze(2) if self.input_size == 1 else input_seq.view(1, -1, self.input_size)
-
-        try:
-            lstm_out, _ = self.lstm(input_seq)
-        except ValueError:
-            input_seq = input_seq.view(1, -1, self.input_size)
-            lstm_out, _ = self.lstm(input_seq)
-            
-        predictions = self.linear(lstm_out[:, -1, :])
-        return predictions
 
 
 class NivoLSTM:
@@ -194,24 +178,33 @@ class NivoLSTM:
 
     def predict_next_move(self, df: pd.DataFrame):
         """
-        Returns (status_string, bull_probability_float).
-        e.g. ("Bullish Momentum", 67.3) or ("Bearish Pressure", 32.1)
+        Returns (status_string, bull_probability_float 0-100).
+        Prepares same 5-feature input as train_lstm.py:
+          [open_r, high_r, low_r, close_r, vol_n] over last 60 candles.
         """
         try:
-            close = df['Close'].values.astype(np.float32)
-            if len(close) < 20:
+            SEQ_LEN = 60
+            if len(df) < SEQ_LEN + 1:
                 return "Insufficient Data", 50.0
 
-            # Normalize last 20 candles
-            seq = close[-20:]
-            seq_norm = ((seq - np.mean(seq)) / (np.std(seq) + 1e-8)).astype(np.float32)
+            df = df.copy()
+            df["open_r"]  = df["Open"].pct_change()
+            df["high_r"]  = df["High"].pct_change()
+            df["low_r"]   = df["Low"].pct_change()
+            df["close_r"] = df["Close"].pct_change()
+            df["vol_n"]   = (df["Volume"] - df["Volume"].mean()) / (df["Volume"].std() + 1e-8)
+            df = df.dropna()
+
+            if len(df) < SEQ_LEN:
+                return "Insufficient Data", 50.0
+
+            features = df[["open_r", "high_r", "low_r", "close_r", "vol_n"]].values[-SEQ_LEN:].astype(np.float32)
 
             with torch.no_grad():
-                tensor = torch.from_numpy(seq_norm).unsqueeze(0).unsqueeze(-1)
-                prediction = self.model(tensor).item()
+                tensor = torch.from_numpy(features).unsqueeze(0)  # shape: (1, 60, 5)
+                prediction = self.model(tensor).item()             # sigmoid output: 0-1
 
-            # Convert raw output to probability
-            bull_prob = float(np.clip(50.0 + prediction * 100, 5.0, 95.0))
+            bull_prob = round(float(prediction) * 100, 1)
 
             if bull_prob > 55:
                 status = "Bullish Momentum"
@@ -220,9 +213,10 @@ class NivoLSTM:
             else:
                 status = "Neutral / Indecisive"
 
-            return status, round(bull_prob, 1)
+            return status, bull_prob
         except Exception as e:
             return f"LSTM Error: {str(e)}", 50.0
+
 
 
 # ============================================================================
