@@ -120,13 +120,15 @@ def run_headless_cycle():
                 timeout=5
             )
             _open_positions = _r.json().get("positions", [])
-            if len(_open_positions) > 0:
-                _pos_summary = ", ".join([p["instrument"] for p in _open_positions])
-                logger.info(f"⏭️ GLOBAL GUARD: {len(_open_positions)} posicion(es) abierta(s) detectada(s) [{_pos_summary}]. No se abrirán nuevas entradas.")
-                sys.exit(0)
+            _open_instruments = [p["instrument"] for p in _open_positions]
+            if _open_instruments:
+                _pos_summary = ", ".join(_open_instruments)
+                logger.info(f"📊 POSICIONES ABIERTAS: [{_pos_summary}] — Análisis continúa. Ejecución bloqueada para pares activos.")
         except Exception as _guard_err:
+            _open_instruments = []
             logger.warning(f"⚠️ Global Guard check failed (proceeding cautiously): {_guard_err}")
         # ---------------------------------------------------------------
+
 
         # Par configurable desde .env (por defecto EUR/USD)
         oanda_symbol = os.getenv("TRADING_PAIR", "EUR_USD")  # Formato OANDA: EUR_USD, GBP_USD, etc.
@@ -258,54 +260,51 @@ def run_headless_cycle():
             environment=oanda_env
         )
         
-        # Check Account for Open Positions BEFORE any signal alerts
-        performance = trader.get_position_performance(oanda_symbol)
-        
-        if performance:
+        # Use pre-fetched position list to avoid redundant API call.
+        # Guard is now per-pair: only block entry on THIS specific instrument.
+        if oanda_symbol in _open_instruments:
             logger.info(f"⏭️ Sincronización: Posición detectada para {oanda_symbol}. Verificando Step-Trailing...")
             
-            # --- STEP TRAILING: Asegurar ganancias cada 20 pips ---
-            trader.update_step_trailing(
-                instrument=oanda_symbol,
-                trade_id=performance.get('trade_id'),
-                entry_price=performance.get('entry_price'),
-                current_sl=performance.get('sl_price', 0),
-                units=performance.get('units', 0),
-                current_pips=performance.get('pips', 0)
-            )
-            
-            # Re-fetch performance to show updated SL and Insured Pips in report
-            performance = trader.get_position_performance(oanda_symbol) or performance
-
-            # SILENT MODE: Solo enviamos reporte si hay un cambio significativo
-            # (Ej: Se aseguró ganancia con el Step-Trailing)
-            last_insured = float(os.getenv(f"LAST_INSURED_{oanda_symbol}", "0.0"))
-            current_insured = performance.get('insured_pips', 0.0)
-            
-            should_notify = False
-            if current_insured > last_insured:
-                logger.info(f"🎯 Milestone: Ganancia asegurada aumentada a +{current_insured} pips. Notificando...")
-                should_notify = True
-                # Guardar el nuevo hito (esto es volátil por proceso, pero ayuda en ráfagas)
-                os.environ[f"LAST_INSURED_{oanda_symbol}"] = str(current_insured)
-
-            if tg_token and tg_chat and should_notify:
-                NotificationManager.position_performance_report(
-                    pair=pair,
-                    units=performance['units'],
-                    entry_price=performance['entry_price'],
-                    current_price=performance['current_price'],
-                    exit_price=performance.get('exit_price', 0.0),
-                    sl_price=performance.get('sl_price', 0.0),
-                    insured_pips=performance.get('insured_pips', 0.0),
-                    pips=performance['pips'],
-                    pnl_usd=performance['pnl_usd'],
-                    token=tg_token,
-                    chat_id=tg_chat
+            # Fetch detailed performance for the active position (Step-Trailing)
+            performance = trader.get_position_performance(oanda_symbol)
+            if performance:
+                # --- STEP TRAILING: Asegurar ganancias cada 20 pips ---
+                trader.update_step_trailing(
+                    instrument=oanda_symbol,
+                    trade_id=performance.get('trade_id'),
+                    entry_price=performance.get('entry_price'),
+                    current_sl=performance.get('sl_price', 0),
+                    units=performance.get('units', 0),
+                    current_pips=performance.get('pips', 0)
                 )
-            final_signal = "WAIT" # Detener lógica de entrada
+                
+                # Re-fetch performance to show updated SL and Insured Pips in report
+                performance = trader.get_position_performance(oanda_symbol) or performance
+
+                # SILENT MODE: Solo enviamos reporte si hay un cambio significativo
+                last_insured = float(os.getenv(f"LAST_INSURED_{oanda_symbol}", "0.0"))
+                current_insured = performance.get('insured_pips', 0.0)
+                
+                if current_insured > last_insured:
+                    logger.info(f"🎯 Milestone: Ganancia asegurada aumentada a +{current_insured} pips. Notificando...")
+                    os.environ[f"LAST_INSURED_{oanda_symbol}"] = str(current_insured)
+                    if tg_token and tg_chat:
+                        NotificationManager.position_performance_report(
+                            pair=pair,
+                            units=performance['units'],
+                            entry_price=performance['entry_price'],
+                            current_price=performance['current_price'],
+                            exit_price=performance.get('exit_price', 0.0),
+                            sl_price=performance.get('sl_price', 0.0),
+                            insured_pips=performance.get('insured_pips', 0.0),
+                            pips=performance['pips'],
+                            pnl_usd=performance['pnl_usd'],
+                            token=tg_token,
+                            chat_id=tg_chat
+                        )
+            final_signal = "WAIT" # Detener lógica de entrada para este par
         else:
-            logger.info(f"🔍 No se detectaron posiciones abiertas para {oanda_symbol}. Evaluando señales de entrada...")
+            logger.info(f"🔍 No hay posición para {oanda_symbol}. Evaluando señales de entrada clue el análisis LSTM...")
             # No hay posicion - Procedemos con la Evaluacion de Entrada
             current_pnl = 0.0 
             # Thresholds per agentic_handoff_context.md: BUY > 60, SELL < 40 (symmetric)
