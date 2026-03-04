@@ -361,8 +361,8 @@ def run_headless_cycle():
         # Prevents STOP_LOSS_ON_FILL_LOSS rejections when ATR-derived SL lands inside the spread.
         try:
             _pricing_r = requests.get(
-                f"{_base_url}/v3/accounts/{_account}/pricing?instruments={oanda_symbol}",
-                headers={"Authorization": f"Bearer {_token}"},
+                f"https://{trader.hostname}/v3/accounts/{trader.account_id}/pricing?instruments={oanda_symbol}",
+                headers={"Authorization": f"Bearer {trader.token}"},
                 timeout=5
             )
             _price_data = _pricing_r.json().get("prices", [{}])[0]
@@ -383,6 +383,7 @@ def run_headless_cycle():
                     logger.info(f"[SL SPREAD FIX] SL adjusted to {sl_price:.5f} (was too close to spread: {_spread:.5f})")
         except Exception as _spread_err:
             logger.warning(f"[SL SPREAD FIX] Could not validate spread (proceeding with original SL): {_spread_err}")
+
 
         trader.execute_trade(
             instrument=oanda_symbol,
