@@ -174,7 +174,9 @@ class NivoLSTM:
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 "scripts", "data"
             )
-            weights_path = os.path.join(_script_dir, f"lstm_{pair}.pth")
+            # Normalize pair name: 'EUR/USD' → 'EUR_USD' to match file naming convention
+            pair_safe = pair.replace("/", "_")
+            weights_path = os.path.join(_script_dir, f"lstm_{pair_safe}.pth")
             if os.path.exists(weights_path):
                 try:
                     state_dict = torch.load(weights_path, map_location="cpu")
