@@ -190,25 +190,48 @@ class NotificationManager:
     def trade_execution_report(pair, action, units, order_id, token, chat_id):
         """
         Confirma la ejecucion real en el broker con el ID de transaccion.
+        Incluye boton de panico inline para cierre de emergencia.
         """
-        icon = '\u2705' # check mark
         oanda_link = "https://trade.oanda.com/"
-        
+
         from datetime import datetime
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+        direction_icon = '📈' if int(units) > 0 else '📉'
+        direction_text = 'COMPRA (LONG)' if int(units) > 0 else 'VENTA (SHORT)'
+
         msg = (
-            f"{icon} EJECUCION CONFIRMADA\n"
-            f"{'='*30}\n"
-            f"Hora:        {now}\n"
-            f"Instrumento: {pair}\n"
-            f"Operacion:   {'COMPRA' if int(units) > 0 else 'VENTA'}\n"
-            f"Unidades:    {abs(int(units))}\n"
-            f"Transaccion: {order_id}\n"
-            f"{'='*30}\n"
-            f"\ud83d\udcf1 Ver en OANDA: {oanda_link}"
+            f"✅ <b>EJECUCION CONFIRMADA</b>\n"
+            f"{'─'*24}\n"
+            f"🕐 <b>Hora:</b>         {now}\n"
+            f"📊 <b>Par:</b>          {pair}\n"
+            f"{direction_icon} <b>Operacion:</b>   {direction_text}\n"
+            f"📦 <b>Unidades:</b>     {abs(int(units)):,}\n"
+            f"🔖 <b>Transaccion:</b>  {order_id}\n"
+            f"{'─'*24}\n"
+            f"📱 <a href='{oanda_link}'>Ver en OANDA</a>"
         )
-        return NotificationManager.send_telegram(msg, token, chat_id)
+
+        # Inline keyboard with panic kill switch button
+        reply_markup = {
+            "inline_keyboard": [[
+                {"text": "🛑 KILL SWITCH — Cerrar Todo", "callback_data": "/kill"}
+            ]]
+        }
+
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        try:
+            requests.post(url, json={
+                "chat_id": chat_id,
+                "text": msg,
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }, timeout=10)
+        except Exception:
+            # Fallback: plain message without button
+            try:
+                requests.post(url, json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}, timeout=10)
+            except Exception:
+                pass
 
     @staticmethod
     def send_whatsapp(message, sid, token, from_num, to_num):

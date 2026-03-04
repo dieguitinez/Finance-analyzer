@@ -175,18 +175,6 @@ def run_headless_cycle():
         is_vetoed, veto_reason = cortex.evaluate_veto(df)
         if is_vetoed:
             logger.info(f"🛑 CORTEX VETO: {veto_reason} | No trade will be executed.")
-            tg_token_veto = os.getenv("TELEGRAM_BOT_TOKEN", "")
-            tg_chat_veto  = os.getenv("TELEGRAM_CHAT_ID", "")
-            if tg_token_veto and tg_chat_veto:
-                try:
-                    import requests as _req
-                    _req.post(
-                        f"https://api.telegram.org/bot{tg_token_veto}/sendMessage",
-                        json={"chat_id": tg_chat_veto, "text": f"🛑 <b>CORTEX VETO</b>\n{veto_reason}\nPar: {pair}", "parse_mode": "HTML"},
-                        timeout=5
-                    )
-                except Exception:
-                    pass
             sys.exit(0)
 
         logger.info(f"✅ Cortex Approved — proceding to QuantumBridge synthesis.")
@@ -377,4 +365,108 @@ def run_headless_cycle():
         logger.info("Metrics do not align for Live routing or Position already open. Session Closed.")
 
 if __name__ == "__main__":
-    run_headless_cycle()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--diagnostic", action="store_true", help="Run AI analysis only, output JSON report (no trade execution)")
+    args, _ = parser.parse_known_args()
+
+    if args.diagnostic:
+        # === DIAGNOSTIC MODE: Full AI analysis → JSON output, NO trade execution ===
+        import json as _json
+        _report = {}
+        try:
+            load_dotenv()
+            _token   = os.getenv("OANDA_ACCESS_TOKEN")
+            _account = os.getenv("OANDA_ACCOUNT_ID")
+            oanda_symbol = os.getenv("TRADING_PAIR", "EUR_USD")
+            pair = oanda_symbol.replace("_", "/")
+
+            # Data
+            oanda_cfg = {"token": _token, "account_id": _account}
+            engine = DataEngine(oanda_config=oanda_cfg)
+            df = engine.fetch_data(pair, "1h")
+
+            if df is None or df.empty:
+                print(_json.dumps({"error": "No data available for this pair"}))
+                sys.exit(0)
+
+            # 1. LEFT HEMISPHERE - Technical Brain
+            brain = NivoTradeBrain(df)
+            brain_analysis = brain.analyze_market()
+            tech_score = brain_analysis.get("score", 50.0)
+            tech_signal = brain_analysis.get("signal", "NEUTRAL")
+            tech_details = brain_analysis.get("indicators", {})
+
+            # 2. RIGHT HEMISPHERE - HMM Regime
+            cortex = NivoCortex(data=df, oanda_token=_token, oanda_id=_account, pair=pair)
+            regime_map = {0: "Calm / Low Volatility", 1: "Elevated Volatility", 2: "Crash / Extreme Panic"}
+            hmm_regime_id, hmm_label = cortex.hmm.detect_regime(df)
+            if hmm_regime_id == -1:
+                hmm_regime_id, hmm_label = 0, "Calm / Low Volatility"
+
+            # 3. RIGHT HEMISPHERE - LSTM
+            lstm_status, lstm_prob = cortex.lstm.predict_next_move(df)
+            lstm_is_trained = cortex.lstm.is_trained
+
+            # 4. CORTEX VETO check
+            is_vetoed, veto_reason = cortex.evaluate_veto(df)
+
+            # 5. FUNDAMENTAL SENTIMENT (real FundamentalEngine from data_engine.py)
+            fund_items, fund_sentiment = FundamentalEngine.get_pair_sentiment(pair)
+            fund_headlines = len(fund_items)
+
+            # 6. QUANTUM BRIDGE
+            q_bridge = QuantumBridge()
+            q_res = q_bridge.execute_pipeline(df)
+            q_multiplier = q_res.get("quantum_multiplier", 1.0)
+
+            final_score = q_bridge.calculate_nivo_q_score(
+                legacy_tech_score=tech_score,
+                legacy_fund_score=fund_sentiment,
+                q_regime_state=q_res.get("hqmm_probs", [0.5, 0.3, 0.2]).index(max(q_res.get("hqmm_probs", [0.5, 0.3, 0.2]))),
+                q_forecast_delta=q_res.get("qlstm_bull_prob", 50.0),
+                q_position_weight=q_res.get("optimal_position_size", 1.0)
+            )
+
+            raw_signal = "BUY" if final_score > 60.0 else "SELL" if final_score < 40.0 else "WAIT"
+            if is_vetoed:
+                raw_signal = f"VETOED ({veto_reason})"
+
+            _report = {
+                "pair": pair,
+                "timestamp": str(pd.Timestamp.now()),
+                "current_price": round(float(df['Close'].iloc[-1]), 5),
+                "left_hemisphere": {
+                    "tech_score": round(tech_score, 2),
+                    "signal": tech_signal,
+                    "rsi": round(float(tech_details.get("rsi", 0)), 2) if tech_details else "N/A",
+                    "macd_signal": str(tech_details.get("macd_signal", "N/A")) if tech_details else "N/A",
+                },
+                "right_hemisphere": {
+                    "hmm_regime": hmm_label,
+                    "hmm_id": int(hmm_regime_id),
+                    "lstm_bull_prob": round(float(lstm_prob), 2),
+                    "lstm_trained": lstm_is_trained,
+                    "cortex_veto": is_vetoed,
+                    "veto_reason": veto_reason if is_vetoed else None,
+                },
+                "fundamental": {
+                    "sentiment_score": round(float(fund_sentiment), 2),
+                    "headline_count": fund_headlines,
+                },
+                "quantum_bridge": {
+                    "q_multiplier": round(float(q_multiplier), 4),
+                    "final_score": round(float(final_score), 2),
+                },
+                "decision": raw_signal
+            }
+
+        except Exception as _diag_e:
+            _report = {"error": str(_diag_e)}
+
+        print(_json.dumps(_report))
+        sys.exit(0)
+
+    else:
+        run_headless_cycle()
+

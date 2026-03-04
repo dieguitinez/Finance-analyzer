@@ -321,6 +321,58 @@ class NivoAutoTrader:
             logger.error(f"[ERROR] close_all_positions failed: {e}")
             return {"status": "error", "message": str(e)}
 
+    def close_single_position(self, instrument: str):
+        """
+        Closes a single position by instrument name (e.g. 'EUR_USD').
+        Returns dict with status and realized PnL.
+        """
+        try:
+            instrument = instrument.replace("/", "_").upper()
+            logger.warning(f"📤 [CLOSE] Closing position for {instrument}...")
+
+            base_url = f"https://{self.hostname}"
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json"
+            }
+
+            # Fetch position to determine side
+            r = requests.get(
+                f"{base_url}/v3/accounts/{self.account_id}/positions/{instrument}",
+                headers=headers, timeout=10
+            )
+            if r.status_code != 200:
+                return {"status": "error", "message": f"Could not fetch position: HTTP {r.status_code}"}
+
+            pos = r.json().get("position", {})
+            long_units = float(pos.get("long", {}).get("units", 0))
+            short_units = float(pos.get("short", {}).get("units", 0))
+
+            if long_units > 0:
+                body = {"longUnits": "ALL", "shortUnits": "NONE"}
+            elif short_units < 0:
+                body = {"longUnits": "NONE", "shortUnits": "ALL"}
+            else:
+                return {"status": "error", "message": f"No open position for {instrument}"}
+
+            res = requests.put(
+                f"{base_url}/v3/accounts/{self.account_id}/positions/{instrument}/close",
+                headers=headers, json=body, timeout=10
+            )
+
+            tx = res.json().get("shortOrderFillTransaction") or res.json().get("longOrderFillTransaction") or {}
+            pl = float(tx.get("pl", 0)) if tx else 0.0
+            logger.info(f"[CLOSE] {instrument}: HTTP {res.status_code} | PnL ${pl:+.2f}")
+
+            if res.status_code in (200, 201):
+                return {"status": "success", "instrument": instrument, "pl": pl}
+            else:
+                return {"status": "error", "message": f"OANDA HTTP {res.status_code}: {res.text[:200]}"}
+
+        except Exception as e:
+            logger.error(f"[ERROR] close_single_position failed: {e}")
+            return {"status": "error", "message": str(e)}
+
     def calculate_position_size(self, stop_loss_pips):
         """Calculate units based on risk percentage and stop loss distance."""
         # Simplified for EUR/USD. In production, this would account for exchange rates.
