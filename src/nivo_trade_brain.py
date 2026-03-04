@@ -112,7 +112,7 @@ class NivoTradeBrain:
         if prev['MACD'] < prev['MACD_Signal'] and last['MACD'] > last['MACD_Signal']:
             score_long += 2.0
             reasons_long.append("✅ MACD Bullish Crossover")
-        elif prev['MACD'] > prev['MACD_Signal'] and last['MACD'] < prev['MACD_Signal']:
+        elif prev['MACD'] > prev['MACD_Signal'] and last['MACD'] < last['MACD_Signal']:
             score_short += 2.0
             reasons_short.append("✅ MACD Bearish Crossover")
 
