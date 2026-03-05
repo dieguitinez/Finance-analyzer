@@ -194,9 +194,13 @@ def run_sentinel():
     logger.info("Ciclo Sentinel Iniciado.")
     
     # 1. Get Watchlist
-    watchlist_env = os.getenv("WATCHLIST", os.getenv("TRADING_PAIR", "EUR_USD"))
-    watchlist = [p.strip() for p in watchlist_env.split(',') if p.strip()]
-    
+    # 0. Check for Panic Lock (Kill Switch)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    panic_lock_path = os.path.join(project_root, ".panic_lock")
+    if os.path.exists(panic_lock_path):
+        logger.warning("🚨 [KILL SWITCH] .panic_lock detected. Autonomous trading is HALTED.")
+        sys.exit(0)
+
     logger.info(f"Escaneando Watchlist: {watchlist}")
     
     triggered_pairs = []

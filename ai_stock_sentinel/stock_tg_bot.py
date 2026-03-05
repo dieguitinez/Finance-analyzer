@@ -174,19 +174,37 @@ class NivoStockBot:
                 self.send_message("❌ Alpaca API no configurada. Verifica ALPACA_API_KEY en .env")
                 return
             try:
+                # Create .panic_lock to stop the watcher
+                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                panic_lock_path = os.path.join(project_root, ".panic_lock")
+                with open(panic_lock_path, "w") as f:
+                    f.write("LOCKED")
+
                 positions = self.trading_client.get_all_positions()
                 if not positions:
-                    self.send_message("ℹ️ No hay posiciones abiertas para cerrar.")
+                    self.send_message("🛑 <b>KILL SWITCH ACTIVO</b>\nNo hay posiciones, pero el scanner ha sido detenido.")
                     return
                 n = len(positions)
                 self.trading_client.close_all_positions(cancel_orders=True)
                 self.send_message(
                     f"🛑 <b>KILL SWITCH EJECUTADO</b>\n"
                     f"Cerrando {n} posición(es) en Alpaca Paper.\n"
-                    f"Verifica en /status en ~30s."
+                    f"Scanner detenido via .panic_lock."
                 )
             except Exception as e:
                 self.send_message(f"❌ Error al ejecutar kill switch: {e}")
+
+        elif command == "/resume":
+            try:
+                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                panic_lock_path = os.path.join(project_root, ".panic_lock")
+                if os.path.exists(panic_lock_path):
+                    os.remove(panic_lock_path)
+                    self.send_message("✅ <b>SISTEMA REANUDADO</b>\nEl scanner de Alpaca vuelve a estar operativo.")
+                else:
+                    self.send_message("ℹ️ El sistema ya estaba operativo.")
+            except Exception as e:
+                self.send_message(f"❌ Error al reanudar: {e}")
 
         else:
             self.send_message(f"❓ Comando desconocido: {command}. Escribe /ayuda.")

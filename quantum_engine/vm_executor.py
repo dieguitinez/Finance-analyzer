@@ -95,9 +95,15 @@ def run_headless_cycle():
     """
     logger.info("Initializing Quantum Computation Cycle...")
     
-    # 1. Environment Security
+    # 1. Environment Security & Kill Switch
     load_dotenv()
     
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    panic_lock_path = os.path.join(project_root, ".panic_lock")
+    if os.path.exists(panic_lock_path):
+        logger.warning("🚨 [KILL SWITCH] .panic_lock detected in VM Executor. Halting execution.")
+        return False
+
     # Memory Scope Pre-allocation for explicit GC tracking
     df = None
     q_bridge = None
