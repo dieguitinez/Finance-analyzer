@@ -201,6 +201,10 @@ def run_sentinel():
         logger.warning("🚨 [KILL SWITCH] .panic_lock detected. Autonomous trading is HALTED.")
         sys.exit(0)
 
+    # 1. Get Watchlist
+    watchlist_env = os.getenv("WATCHLIST", os.getenv("TRADING_PAIR", "EUR_USD"))
+    watchlist = [p.strip() for p in watchlist_env.split(',') if p.strip()]
+
     logger.info(f"Escaneando Watchlist: {watchlist}")
     
     triggered_pairs = []
