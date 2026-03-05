@@ -396,6 +396,11 @@ class NivoStockWatcher:
                 if signal == "SELL" and not self.is_pdt_safe_to_sell(symbol):
                     continue  # Bloqueado — se compró hoy mismo
 
+                # ─── EXISTING POSITION GUARD ─────────────────────────────────
+                if signal == "BUY" and self.executor.has_open_position(symbol):
+                    self.logger.info(f"🛡️ Posición ya abierta en {symbol}. Omitiendo nueva compra.")
+                    continue
+
                 # Calcular Bracket (2% SL, 5% TP)
                 if signal == "BUY":
                     sl_price = round(current_price * 0.98, 2)
@@ -503,6 +508,11 @@ class NivoStockWatcher:
                 # ─── PDT CHECK para ventas en cola ──────────────────────────
                 if original_side_str == "sell" and not self.is_pdt_safe_to_sell(symbol):
                     continue  # Bloqueado por PDT
+
+                # ─── EXISTING POSITION GUARD ─────────────────────────────────
+                if expected_signal == "BUY" and self.executor.has_open_position(symbol):
+                    self.logger.info(f"[Queue] 🛡️ Posición ya abierta en {symbol}. Omitiendo nueva compra.")
+                    continue
 
                 # Recalcular SL/TP al precio de apertura real (10:00 AM)
                 if expected_signal == "BUY":

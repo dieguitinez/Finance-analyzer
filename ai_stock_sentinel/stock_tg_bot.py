@@ -2,7 +2,14 @@ import os
 import time
 import requests
 import logging
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
+
+# Stock Engine Imports
+from cerebral_engine import StockCerebralEngine
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+from alpaca.data.historical import StockHistoricalDataClient
 
 # Setup Logging
 logging.basicConfig(
@@ -25,6 +32,10 @@ class NivoStockBot:
         if not self.token or not self.chat_id:
             logger.error("❌ STOCK_TELEGRAM_BOT_TOKEN or STOCK_TELEGRAM_CHAT_ID missing in ai_stock_sentinel/.env")
 
+        # Engine
+        self.cerebro = StockCerebralEngine()
+        self.watchlist = os.getenv('STOCK_WATCHLIST', 'NVDA,TSM').split(',')
+
         # Alpaca (optional — only needed for /status and /saldo)
         self._init_alpaca()
 
@@ -37,17 +48,22 @@ class NivoStockBot:
             is_paper   = os.getenv("ALPACA_PAPER", "True") == "True"
             if api_key and secret_key:
                 self.trading_client = TradingClient(api_key, secret_key, paper=is_paper)
+                self.data_client = StockHistoricalDataClient(api_key, secret_key)
                 logger.info("✅ Alpaca client connected")
             else:
                 self.trading_client = None
+                self.data_client = None
                 logger.warning("⚠️ ALPACA_API_KEY missing — /status and /saldo disabled")
         except Exception as e:
             self.trading_client = None
+            self.data_client = None
             logger.error(f"⚠️ Alpaca init failed: {e}")
 
-    def send_message(self, text):
+    def send_message(self, text, reply_markup=None):
         url     = f"{self.api_url}/sendMessage"
         payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
         try:
             requests.post(url, json=payload, timeout=10)
         except Exception as e:
@@ -62,8 +78,10 @@ class NivoStockBot:
                 "🤖 <b>Nivo Stock Sentinel - Command Center</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "Comandos disponibles:\n"
+                "🔹 /analizar - 🧠 Análisis IA instantáneo de un activo\n"
                 "🔹 /status - Posiciones abiertas en Alpaca\n"
                 "🔹 /saldo - Balance y poder de compra\n"
+                "🔹 /kill - 🛑 Cerrar TODAS las posiciones (emergencia)\n"
                 "🔹 /watchlist - Las 15 acciones vigiladas\n"
                 "🔹 /dashboard - Link a Alpaca Dashboard\n"
                 "🔹 /chatid - Ver tu Chat ID (para configuración)\n"
@@ -136,8 +154,97 @@ class NivoStockBot:
             )
             self.send_message(msg)
 
+        elif command == "/analizar":
+            keyboard = []
+            row = []
+            for i, sym in enumerate(self.watchlist):
+                row.append({"text": sym.strip(), "callback_data": f"analyze_{sym.strip()}"})
+                if len(row) == 3 or i == len(self.watchlist) - 1:
+                    keyboard.append(row)
+                    row = []
+            
+            reply_markup = {"inline_keyboard": keyboard}
+            self.send_message(
+                "🧠 <b>Selecciona la acción a analizar:</b>",
+                reply_markup=reply_markup
+            )
+
+        elif command == "/kill":
+            if not self.trading_client:
+                self.send_message("❌ Alpaca API no configurada. Verifica ALPACA_API_KEY en .env")
+                return
+            try:
+                positions = self.trading_client.get_all_positions()
+                if not positions:
+                    self.send_message("ℹ️ No hay posiciones abiertas para cerrar.")
+                    return
+                n = len(positions)
+                self.trading_client.close_all_positions(cancel_orders=True)
+                self.send_message(
+                    f"🛑 <b>KILL SWITCH EJECUTADO</b>\n"
+                    f"Cerrando {n} posición(es) en Alpaca Paper.\n"
+                    f"Verifica en /status en ~30s."
+                )
+            except Exception as e:
+                self.send_message(f"❌ Error al ejecutar kill switch: {e}")
+
         else:
             self.send_message(f"❓ Comando desconocido: {command}. Escribe /ayuda.")
+
+    def _handle_callback_query(self, query):
+        data = query.get("data", "")
+        sender_id = str(query.get("message", {}).get("chat", {}).get("id"))
+        
+        if self.chat_id and sender_id != self.chat_id:
+            return  # Unauthorized
+
+        if data.startswith("analyze_"):
+            symbol = data.split("_")[1]
+            self.send_message(f"⏳ <i>Descargando datos y analizando {symbol}...</i>")
+            
+            if not getattr(self, "data_client", None):
+                self.send_message("❌ Alpaca API no está configurada para obtener datos.")
+                return
+                
+            try:
+                # 1. Bajar data
+                start_time = datetime.now() - timedelta(days=5)
+                request_params = StockBarsRequest(
+                    symbol_or_symbols=symbol,
+                    timeframe=TimeFrame.Minute,
+                    start=start_time
+                )
+                bars = self.data_client.get_stock_bars(request_params)
+                df = bars.df
+                
+                # 2. Correr cerebro
+                signal, reason = self.cerebro.analyze_momentum(df, symbol)
+                current_price = df['close'].iloc[-1]
+                
+                # 3. Formatear output
+                if not signal:
+                    icon = "💤"
+                    status = "NEUTRAL"
+                    rec = "Mantener vigilancia normal."
+                else:
+                    icon = "🚀" if signal == "BUY" else "🔻"
+                    status = signal
+                    rec = "Oportunidad detectada (Revisar logs para ejecución)."
+
+                msg = (
+                    f"🧠 <b>Análisis IA: {symbol}</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"💵 <b>Precio Actual:</b> ${current_price:.2f}\n"
+                    f"{icon} <b>Veredicto:</b> {status}\n\n"
+                    f"📝 <b>Detalle del Motor Nivo:</b>\n"
+                    f"<i>{reason}</i>\n\n"
+                    f"💡 <b>Recomendación:</b> {rec}\n"
+                    "━━━━━━━━━━━━━━━━━━━━"
+                )
+                self.send_message(msg)
+                
+            except Exception as e:
+                self.send_message(f"❌ <b>Error analizando {symbol}:</b>\n<code>{e}</code>")
 
     def poll_updates(self):
         url    = f"{self.api_url}/getUpdates"
@@ -167,14 +274,59 @@ class NivoStockBot:
                         if text.startswith("/"):
                             parts = text.split()
                             self.handle_command(parts[0], parts[1:], sender_id=sender_id)
+                            
+                    elif "callback_query" in update:
+                        # Handle inline button clicks
+                        self._handle_callback_query(update["callback_query"])
+                        
+                        # Answer callback query to remove loading state on button
+                        cb_id = update["callback_query"].get("id")
+                        if cb_id:
+                            cb_url = f"{self.api_url}/answerCallbackQuery"
+                            requests.post(cb_url, json={"callback_query_id": cb_id}, timeout=5)
+                            
             else:
                 logger.error(f"Polling error: {response.status_code}")
         except Exception as e:
             logger.error(f"Error polling: {e}")
 
+    def _clear_stale_session(self):
+        """
+        Two-step Telegram session takeover:
+        1. deleteWebhook — clears any registered webhook
+        2. getUpdates(timeout=0) — steals back the polling slot from any
+           other active instance. Telegram only allows ONE active getUpdates
+           session per token; calling it with timeout=0 immediately terminates
+           the previous one and hands control to us.
+        """
+        try:
+            requests.post(
+                f"{self.api_url}/deleteWebhook",
+                json={"drop_pending_updates": True},
+                timeout=10
+            )
+        except Exception:
+            pass
+
+        # Force-close any active long-poll session held by a previous process
+        try:
+            resp = requests.get(
+                f"{self.api_url}/getUpdates",
+                params={"timeout": 0, "offset": -1},
+                timeout=10
+            )
+            if resp.status_code == 200:
+                logger.info("✅ Telegram poll slot acquired (stale session cleared).")
+            else:
+                logger.warning(f"⚠️ getUpdates(timeout=0) returned {resp.status_code}.")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not steal poll slot: {e}")
+
     def run(self):
         logger.info("🚀 Stock Telegram Bot started.")
         logger.info(f"   Authorized chat_id: {self.chat_id or '(NOT SET)'}")
+        # Clear any stale Telegram long-poll session from previous instance (prevents 409)
+        self._clear_stale_session()
         self.send_message("🤖 <b>Stock Sentinel Online.</b> /ayuda para comandos.")
         while True:
             self.poll_updates()

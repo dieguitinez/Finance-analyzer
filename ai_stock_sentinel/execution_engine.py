@@ -69,3 +69,17 @@ class StockExecutionEngine:
         """Consulta el poder de compra disponible"""
         account = self.client.get_account()
         return float(account.buying_power)
+
+    def has_open_position(self, symbol) -> bool:
+        """
+        Consulta si ya existe una posición abierta para el símbolo en Alpaca.
+        Retorna True si hay posición, False si no la hay.
+        """
+        try:
+            position = self.client.get_open_position(symbol_or_asset_id=symbol)
+            return float(position.qty) != 0
+        except Exception as e:
+            if "position does not exist" in str(e).lower():
+                return False
+            print(f"⚠️ Error checking open position for {symbol}: {e}")
+            return True

@@ -173,7 +173,8 @@ class FundamentalEngine:
             # Use max 20 recent headlines (Expanded from 10 + MarketPulse)
             entries = all_entries[:20]
             if not entries:
-                return [], 50.0  # Neutral fallback
+                print(f"[FundamentalEngine] ⚠️ Zero headlines for {pair_name}. RSS feeds may be down. Using neutral 50.0")
+                return [], 50.0
                 
             for entry in entries:
                 # Vader compound score is between -1.0 and 1.0

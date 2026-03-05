@@ -113,9 +113,6 @@ def run_headless_cycle():
         _token = os.getenv("OANDA_ACCESS_TOKEN", "")
         _account = os.getenv("OANDA_ACCOUNT_ID", "")
         _base_url = os.getenv("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
-        _tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        _tg_chat  = os.getenv("TELEGRAM_CHAT_ID", "")
-        _pos_cache_path = "/tmp/nivo_open_positions.json"
         try:
             _r = requests.get(
                 f"{_base_url}/v3/accounts/{_account}/openPositions",
@@ -127,53 +124,6 @@ def run_headless_cycle():
             if _open_instruments:
                 _pos_summary = ", ".join(_open_instruments)
                 logger.info(f"📊 POSICIONES ABIERTAS: [{_pos_summary}] — Análisis continúa. Ejecución bloqueada para pares activos.")
-
-            # --- TRAILING STOP CLOSE DETECTION ---
-            # Compare current positions against previous cycle's snapshot.
-            # If a position disappeared → OANDA closed it automatically (trailing stop or SL hit).
-            try:
-                if os.path.exists(_pos_cache_path):
-                    _prev_cache = json.loads(open(_pos_cache_path).read())
-                    _prev_instruments = set(_prev_cache.keys())
-                    _curr_instruments = set(_open_instruments)
-                    _closed_by_ts = _prev_instruments - _curr_instruments
-                    for _closed_pair in _closed_by_ts:
-                        _prev = _prev_cache[_closed_pair]
-                        logger.info(f"[TS CLOSE DETECTED] {_closed_pair} no longer in openPositions — likely closed by trailing stop.")
-                        NotificationManager.trailing_stop_close_report(
-                            pair=_closed_pair.replace("_", "/"),
-                            units=_prev.get("units", 0),
-                            entry_price=_prev.get("entry_price", 0.0),
-                            close_price=_prev.get("current_price", 0.0),
-                            pnl_usd=_prev.get("pnl_usd", 0.0),
-                            pips=_prev.get("pips", 0.0),
-                            token=_tg_token,
-                            chat_id=_tg_chat
-                        )
-            except Exception as _ts_detect_err:
-                logger.warning(f"[TS CLOSE DETECTION] Cache check failed (non-critical): {_ts_detect_err}")
-
-            # Save current open positions snapshot for next cycle comparison
-            try:
-                _pos_snapshot = {}
-                for _pos in _open_positions:
-                    _instr = _pos["instrument"]
-                    _long_u  = float(_pos.get("long", {}).get("units", 0))
-                    _short_u = float(_pos.get("short", {}).get("units", 0))
-                    _units   = _long_u if _long_u != 0 else _short_u
-                    _avg_px  = float(_pos.get("long" if _long_u != 0 else "short", {}).get("averagePrice", 0))
-                    _unreal  = float(_pos.get("unrealizedPL", 0))
-                    _pos_snapshot[_instr] = {
-                        "units": _units,
-                        "entry_price": _avg_px,
-                        "current_price": _avg_px,  # best available without extra API call
-                        "pnl_usd": _unreal,
-                        "pips": 0.0  # approximate — will not be precise but gives context
-                    }
-                open(_pos_cache_path, "w").write(json.dumps(_pos_snapshot))
-            except Exception as _snap_err:
-                logger.warning(f"[TS CLOSE DETECTION] Could not save position snapshot: {_snap_err}")
-
         except Exception as _guard_err:
             _open_instruments = []
             logger.warning(f"⚠️ Global Guard check failed (proceeding cautiously): {_guard_err}")
@@ -219,13 +169,24 @@ def run_headless_cycle():
 
         # 3b. LSTM Direction Probability
         _, lstm_prob = cortex.lstm.predict_next_move(df)  # returns (str, float 0-100)
-        lstm_status_badge = "✅ Trained" if cortex.lstm.is_trained else "⚠️ Random Weights"
-        logger.info(f"[RIGHT HEMISPHERE] LSTM Bull Probability: {lstm_prob:.1f}% [{lstm_status_badge}]")
+        logger.info(f"[RIGHT HEMISPHERE] LSTM Bull Probability: {lstm_prob:.1f}%")
 
         # 3c. CORTEX VETO: Block trades in dangerous regimes (CRASH or HIGH VOLATILITY)
         is_vetoed, veto_reason = cortex.evaluate_veto(df)
         if is_vetoed:
             logger.info(f"🛑 CORTEX VETO: {veto_reason} | No trade will be executed.")
+            tg_token_veto = os.getenv("TELEGRAM_BOT_TOKEN", "")
+            tg_chat_veto  = os.getenv("TELEGRAM_CHAT_ID", "")
+            if tg_token_veto and tg_chat_veto:
+                try:
+                    import requests as _req
+                    _req.post(
+                        f"https://api.telegram.org/bot{tg_token_veto}/sendMessage",
+                        json={"chat_id": tg_chat_veto, "text": f"🛑 <b>CORTEX VETO</b>\n{veto_reason}\nPar: {pair}", "parse_mode": "HTML"},
+                        timeout=5
+                    )
+                except Exception:
+                    pass
             sys.exit(0)
 
         logger.info(f"✅ Cortex Approved — proceding to QuantumBridge synthesis.")
@@ -389,15 +350,14 @@ def run_headless_cycle():
         final_signal = "HOLD"  # Fail safe
 
     finally:
-        # 5. Strict Memory Management — gc + OS-level malloc_trim
-        from quantum_engine.nivo_memory import release_memory
-        if 'df' in dir(): del df  # noqa: F821
-        if 'q_bridge' in dir(): del q_bridge  # noqa: F821
-        if 'guardian' in dir(): del guardian  # noqa: F821
-        if 'prices' in dir(): del prices  # noqa: F821
-        if 'brain' in dir(): del brain  # noqa: F821
-        if 'cortex' in dir(): del cortex  # noqa: F821
-        release_memory(logger=logger)
+        # 5. Strict Memory Management
+        logger.info("Executing Aggressive Memory Flush...")
+        if 'df' in locals(): del df
+        if 'q_bridge' in locals(): del q_bridge
+        if 'guardian' in locals(): del guardian
+        if 'prices' in locals(): del prices
+        gc.collect()
+        logger.info("VM Memory Buffer Cleared successfully.")
 
     # 6. Broker Connection Route
     # We only call this if final_signal is BUY/SELL and NO position was detected above
@@ -406,41 +366,10 @@ def run_headless_cycle():
         # OANDA v20 Protocol: Positive units for LONG, Negative for SHORT
         units_base = int(10000 * (capped_weight if 'capped_weight' in locals() else 1.0))
         trade_units = units_base if final_signal == "BUY" else -abs(units_base)
-
-        # --- REAL-TIME EXECUTION PRICING FIX ---
-        # Recalculate SL and TS using the exact live bid/ask to avoid STOP_LOSS_ON_FILL_LOSS
-        try:
-            _pricing_r = requests.get(
-                f"https://{trader.hostname}/v3/accounts/{trader.account_id}/pricing?instruments={oanda_symbol}",
-                headers={"Authorization": f"Bearer {trader.token}"},
-                timeout=5
-            )
-            _price_data = _pricing_r.json().get("prices", [{}])[0]
-            _ask = float(_price_data.get("asks", [{}])[0].get("price", current_price))
-            _bid = float(_price_data.get("bids", [{}])[0].get("price", current_price))
-            
-            # Re-fetch ATR if locals forgot it, otherwise proxy it
-            _atr = atr_value if 'atr_value' in locals() else 0.0030
-            _min_dist = max(_atr * 1.5, 0.0010) # At least 10 pips
-
-            if final_signal == "BUY":
-                # Buy at Ask, SL below Bid
-                sl_price = _bid - _min_dist
-            else:
-                # Sell at Bid, SL above Ask
-                sl_price = _ask + _min_dist
-
-            # OANDA Rule: TS distance must be smaller than Hard SL distance.
-            # SL distance is exactly _min_dist. Let's make TS distance 0.6x of _min_dist.
-            ts_distance = _min_dist * 0.6
-            
-            logger.info(f"[LIVE PRICING] Buy(Ask):{_ask:.5f} | Sell(Bid):{_bid:.5f} | Live SL:{sl_price:.5f} | TS Dist:{ts_distance:.5f}")
-        except Exception as _prc_err:
-            logger.warning(f"[LIVE PRICING FIX] Could not fetch real-time ticks: {_prc_err}")
-
+        
         trader.execute_trade(
-            instrument=oanda_symbol,
-            units=trade_units,
+            instrument=oanda_symbol, 
+            units=trade_units, 
             stop_loss_price=sl_price,
             trailing_stop_distance=ts_distance
         )
@@ -448,115 +377,4 @@ def run_headless_cycle():
         logger.info("Metrics do not align for Live routing or Position already open. Session Closed.")
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--diagnostic", action="store_true", help="Run AI analysis only, output JSON report (no trade execution)")
-    args, _ = parser.parse_known_args()
-
-    if args.diagnostic:
-        # === DIAGNOSTIC MODE: Full AI analysis → JSON output, NO trade execution ===
-        import json as _json
-        _report = {}
-        try:
-            load_dotenv()
-            _token   = os.getenv("OANDA_ACCESS_TOKEN")
-            _account = os.getenv("OANDA_ACCOUNT_ID")
-            oanda_symbol = os.getenv("TRADING_PAIR", "EUR_USD")
-            pair = oanda_symbol.replace("_", "/")
-
-            # Data
-            oanda_cfg = {"token": _token, "account_id": _account}
-            engine = DataEngine(oanda_config=oanda_cfg)
-            df = engine.fetch_data(pair, "1h")
-
-            if df is None or df.empty:
-                print(_json.dumps({"error": "No data available for this pair"}))
-                sys.exit(0)
-
-            # 1. LEFT HEMISPHERE - Technical Brain
-            brain = NivoTradeBrain(df)
-            brain_analysis = brain.analyze_market()
-            tech_score = brain_analysis.get("score", 50.0)
-            tech_signal = brain_analysis.get("signal", "NEUTRAL")
-            tech_details = brain_analysis.get("indicators", {})
-
-            # 2. RIGHT HEMISPHERE - HMM Regime
-            cortex = NivoCortex(data=df, oanda_token=_token, oanda_id=_account, pair=pair)
-            regime_map = {0: "Calm / Low Volatility", 1: "Elevated Volatility", 2: "Crash / Extreme Panic"}
-            hmm_regime_id, hmm_label = cortex.hmm.detect_regime(df)
-            if hmm_regime_id == -1:
-                hmm_regime_id, hmm_label = 0, "Calm / Low Volatility"
-
-            # 3. RIGHT HEMISPHERE - LSTM
-            lstm_status, lstm_prob = cortex.lstm.predict_next_move(df)
-            lstm_is_trained = cortex.lstm.is_trained
-
-            # 4. CORTEX VETO check
-            is_vetoed, veto_reason = cortex.evaluate_veto(df)
-
-            # 5. FUNDAMENTAL SENTIMENT (real FundamentalEngine from data_engine.py)
-            fund_items, fund_sentiment = FundamentalEngine.get_pair_sentiment(pair)
-            fund_headlines = len(fund_items)
-
-            # 6. QUANTUM BRIDGE
-            q_bridge = QuantumBridge()
-            q_res = q_bridge.execute_pipeline(df)
-            q_multiplier = q_res.get("quantum_multiplier", 1.0)
-
-            # ✅ FIX: Use REAL HMM regime + REAL trained LSTM probability (0-100 scale)
-            # Previously used EMA proxy (0-1 scale) → caused q_diff = -49.5 destroying all bull scores
-            # q_position_weight now derived from real LSTM conviction distance from 50
-            lstm_conviction = abs(lstm_prob - 50.0) / 50.0  # 0.0-1.0
-            q_position_weight = float(np.clip(q_multiplier * (1.0 + lstm_conviction), 0.25, 2.0))
-
-            final_score = q_bridge.calculate_nivo_q_score(
-                legacy_tech_score=tech_score,
-                legacy_fund_score=fund_sentiment,
-                q_regime_state=hmm_regime_id,        # ✅ Real HMM (not EMA proxy index)
-                q_forecast_delta=lstm_prob,           # ✅ Real LSTM 0-100 scale (not EMA 0-1)
-                q_position_weight=q_position_weight   # ✅ Real conviction-based weight
-            )
-
-            raw_signal = "BUY" if final_score > 60.0 else "SELL" if final_score < 40.0 else "WAIT"
-            if is_vetoed:
-                raw_signal = f"VETOED ({veto_reason})"
-
-            _report = {
-                "pair": pair,
-                "timestamp": str(pd.Timestamp.now()),
-                "current_price": round(float(df['Close'].iloc[-1]), 5),
-                "left_hemisphere": {
-                    "tech_score": round(tech_score, 2),
-                    "signal": tech_signal,
-                    # ✅ FIX: Read RSI/MACD directly from the computed df columns (always available)
-                    "rsi": round(float(brain.df['RSI'].iloc[-1]), 2) if not pd.isna(brain.df['RSI'].iloc[-1]) else "N/A",
-                    "macd_signal": "Bullish" if brain.df['MACD'].iloc[-1] > brain.df['MACD_Signal'].iloc[-1] else "Bearish",
-                },
-                "right_hemisphere": {
-                    "hmm_regime": hmm_label,
-                    "hmm_id": int(hmm_regime_id),
-                    "lstm_bull_prob": round(float(lstm_prob), 2),
-                    "lstm_trained": lstm_is_trained,
-                    "cortex_veto": is_vetoed,
-                    "veto_reason": veto_reason if is_vetoed else None,
-                },
-                "fundamental": {
-                    "sentiment_score": round(float(fund_sentiment), 2),
-                    "headline_count": fund_headlines,
-                },
-                "quantum_bridge": {
-                    "q_multiplier": round(float(q_multiplier), 4),
-                    "final_score": round(float(final_score), 2),
-                },
-                "decision": raw_signal
-            }
-
-        except Exception as _diag_e:
-            _report = {"error": str(_diag_e)}
-
-        print(_json.dumps(_report))
-        sys.exit(0)
-
-    else:
-        run_headless_cycle()
-
+    run_headless_cycle()

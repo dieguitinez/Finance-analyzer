@@ -53,8 +53,6 @@ class NivoTelegramBot:
                 "Comandos disponibles:\n"
                 "🔹 /status - Reporte detallado de pips/PnL\n"
                 "🔹 /entries - Lista rápida de posiciones abiertas\n"
-                "🔹 /report EUR_USD - Diagnóstico interno completo (cerebro del Bot)\n"
-                "🔹 /close  - Cerrar una posición específica\n"
                 "🔹 /market - Ver volatilidad y pares calientes\n"
                 "🔹 /scan - Ver pares vigilados por el Sentinel\n"
                 "🔹 /balance - Ver Equidad y Margen disponible\n"
@@ -64,13 +62,13 @@ class NivoTelegramBot:
                 "🟢 /resume - Reanudar operación bloqueada\n"
                 "🔹 /help - Mostrar este mensaje\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>Actualizado: 2026-03-03 22:30</i>\n"
+                "<i>Actualizado: 2026-03-02 15:00</i>\n"
                 "<i>Nivo Partners Institutional Suite</i>"
             )
             self.send_message(help_text)
 
         elif command == "/dashboard":
-            dashboard_url = os.getenv("DASHBOARD_URL", "https://finance-analyzer-fx.streamlit.app")
+            dashboard_url = os.getenv("DASHBOARD_URL", "https://finance-analyzer-fx.streamlit.app/")
             self.send_message(f"🌐 <b>Dashboard En Vivo:</b>\n{dashboard_url}")
 
         elif command == "/oanda":
@@ -210,150 +208,6 @@ class NivoTelegramBot:
             else:
                 self.send_message("ℹ️ El sistema ya se encuentra en estado operativo (No había bloqueo activo).")
             
-        elif command == "/report":
-            requested_raw = args[0].upper().replace("/", "_") if args else ""
-            if not requested_raw:
-                _all_pairs = [
-                    "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD",
-                    "USD_CAD", "USD_CHF", "NZD_USD", "EUR_GBP",
-                    "EUR_JPY", "GBP_JPY", "AUD_JPY", "NZD_JPY",
-                    "EUR_AUD", "EUR_CHF", "CHF_JPY"
-                ]
-                buttons, row = [], []
-                for i, p in enumerate(_all_pairs):
-                    row.append({"text": p.replace("_", "/"), "callback_data": f"report:{p}"})
-                    if len(row) == 3:
-                        buttons.append(row)
-                        row = []
-                if row:
-                    buttons.append(row)
-                try:
-                    requests.post(f"{self.api_url}/sendMessage", json={
-                        "chat_id": self.chat_id,
-                        "text": "🔬 <b>¿Qué par deseas diagnosticar?</b>\nToca un par para ver el análisis interno completo:",
-                        "parse_mode": "HTML",
-                        "reply_markup": {"inline_keyboard": buttons}
-                    }, timeout=10)
-                except Exception as e:
-                    self.send_message(f"❌ Error: {e}")
-                return
-
-            self.send_message(f"🔬 Diagnóstico para <b>{requested_raw.replace('_','/')}</b>... ⏳ ~15s")
-
-            try:
-                import subprocess
-                import json
-                import copy
-
-                env = copy.copy(os.environ)
-                env["TRADING_PAIR"] = requested_raw
-
-                vm_path = os.path.join(_project_root, "quantum_engine", "vm_executor.py")
-                result = subprocess.run(
-                    ["python3", vm_path, "--diagnostic"],
-                    capture_output=True, text=True, timeout=35, env=env,
-                    cwd=_project_root
-                )
-
-                json_line = None
-                for line in reversed(result.stdout.strip().split("\n")):
-                    if line.strip().startswith("{"):
-                        json_line = line.strip()
-                        break
-
-                if not json_line:
-                    self.send_message(f"❌ Sin reporte JSON.\n<code>{result.stderr[-300:]}</code>")
-                    return
-
-                d = json.loads(json_line)
-                if "error" in d:
-                    self.send_message(f"❌ Error en diagnóstico: {d['error']}")
-                    return
-
-                pair_display = d.get("pair", requested_raw.replace("_", "/"))
-                price = d.get("current_price", "N/A")
-                ts = str(d.get("timestamp", ""))[:16]
-                lh = d.get("left_hemisphere", {})
-                rh = d.get("right_hemisphere", {})
-                fd = d.get("fundamental", {})
-                qb = d.get("quantum_bridge", {})
-                decision = d.get("decision", "UNKNOWN")
-
-                dec_icon = "📈" if decision == "BUY" else "📉" if decision == "SELL" else "⏸" if decision == "WAIT" else "🛑"
-                lstm_badge = "✅ Entrenado" if rh.get("lstm_trained") else "⚠️ Aleatorio"
-                lstm_prob = float(rh.get('lstm_bull_prob', 50))
-                lstm_bar  = "🟢" if lstm_prob > 60 else "🔴" if lstm_prob < 40 else "🟡"
-                tech      = float(lh.get('tech_score', 50))
-                tech_bar  = "🟢" if tech > 60 else "🔴" if tech < 40 else "🟡"
-                fscore    = float(qb.get('final_score', 50))
-                fs_bar    = "🟢" if fscore > 60 else "🔴" if fscore < 40 else "🟡"
-                veto_line = f"\n  🛑 <b>VETO:</b> {rh.get('veto_reason')}" if rh.get("cortex_veto") else ""
-
-                msg = (
-                    f"🔬 <b>DIAGNÓSTICO — {pair_display}</b>\n"
-                    f"🕐 {ts}  |  💲 {price}\n"
-                    f"{'═'*22}\n"
-                    f"\n🧠 <b>HEMISFERIO IZQUIERDO (Técnico)</b>\n"
-                    f"  Score: {tech_bar} <b>{lh.get('tech_score')}/100</b>  |  Señal: {lh.get('signal','N/A')}\n"
-                    f"  RSI: {lh.get('rsi','N/A')}  |  MACD: {lh.get('macd_signal','N/A')}\n"
-                    f"\n🤖 <b>HEMISFERIO DERECHO (IA)</b>\n"
-                    f"  HMM Régimen: <b>{rh.get('hmm_regime','N/A')}</b>\n"
-                    f"  LSTM Bull:   {lstm_bar} <b>{lstm_prob}%</b>  [{lstm_badge}]{veto_line}\n"
-                    f"\n📰 <b>FUNDAMENTAL</b>\n"
-                    f"  Sentiment: <b>{fd.get('sentiment_score','N/A')}/100</b>  |  Headlines: {fd.get('headline_count','N/A')}\n"
-                    f"\n⚛️ <b>PUENTE CUÁNTICO</b>\n"
-                    f"  Score Final: {fs_bar} <b>{fscore}/100</b>  |  Q-Mult: {qb.get('q_multiplier','N/A')}x\n"
-                    f"{'═'*22}\n"
-                    f"{dec_icon} <b>DECISIÓN: {decision}</b>\n"
-                    f"<i>BUY &gt;60 | SELL &lt;40 | WAIT en el medio</i>"
-                )
-                self.send_message(msg)
-
-            except subprocess.TimeoutExpired:
-                self.send_message("⏱️ Timeout: diagnóstico tardó más de 35s.")
-            except Exception as e:
-                self.send_message(f"❌ Error: {e}")
-
-        elif command == "/close":
-            if not self.trader:
-                self.send_message("❌ Error: OANDA API no configurada.")
-                return
-            try:
-                response = self.trader.ctx.position.list_open(self.account_id)
-                positions = response.get("positions", 200)
-                if not positions:
-                    self.send_message("✅ No hay posiciones abiertas para cerrar.")
-                    return
-
-                # Build one button per open position
-                buttons = []
-                for pos in positions:
-                    symbol = pos.instrument  # e.g. 'EUR_USD'
-                    long_units = float(pos.long.units)
-                    short_units = float(pos.short.units)
-                    pnl = float(pos.unrealizedPL)
-                    side = "📈 L" if long_units > 0 else "📉 S"
-                    pnl_str = f"${pnl:+.2f}"
-                    label = f"{side} {symbol.replace('_','/')}  {pnl_str}"
-                    buttons.append([{"text": label, "callback_data": f"close:{symbol}"}])
-
-                # Add a cancel button at the bottom
-                buttons.append([{"text": "🚫 Cancelar", "callback_data": "close:CANCEL"}])
-
-                reply_markup = {"inline_keyboard": buttons}
-                url = f"{self.api_url}/sendMessage"
-                try:
-                    requests.post(url, json={
-                        "chat_id": self.chat_id,
-                        "text": "📋 <b>¿Qué posición deseas cerrar?</b>\nToca el par para cerrarlo inmediatamente:",
-                        "parse_mode": "HTML",
-                        "reply_markup": reply_markup
-                    }, timeout=10)
-                except Exception as e:
-                    self.send_message(f"❌ Error mostrando menú: {e}")
-            except Exception as e:
-                self.send_message(f"❌ Error al obtener posiciones: {e}")
-
         else:
             self.send_message(f"❓ Comando desconocido: {command}. Escribe /help para ayuda.")
 
@@ -367,57 +221,6 @@ class NivoTelegramBot:
                 data = response.json()
                 for update in data.get("result", []):
                     self.last_update_id = update["update_id"]
-
-                    # Handle inline keyboard button taps (callback_query)
-                    if "callback_query" in update:
-                        cq = update["callback_query"]
-                        cq_id = cq["id"]
-                        user_id = str(cq["message"]["chat"]["id"])
-                        callback_data = cq.get("data", "")
-
-                        # Answer the callback to dismiss the loading spinner
-                        try:
-                            requests.post(
-                                f"{self.api_url}/answerCallbackQuery",
-                                json={"callback_query_id": cq_id, "text": "⚡ Ejecutando..."},
-                                timeout=5
-                            )
-                        except Exception:
-                            pass
-
-                        # Security: only authorized chat
-                        if user_id == self.chat_id:
-                            if callback_data.startswith("/"):
-                                # Command button (e.g. /kill)
-                                parts = callback_data.split()
-                                self.handle_command(parts[0], parts[1:])
-                            elif callback_data.startswith("report:"):
-                                # Pair report picker button
-                                instrument = callback_data.split(":", 1)[1]
-                                self.handle_command("/report", [instrument])
-                            elif callback_data.startswith("close:"):
-                                # Close single position button
-                                instrument = callback_data.split(":", 1)[1]
-                                if instrument == "CANCEL":
-                                    self.send_message("🚫 Operación cancelada. No se cerró ninguna posición.")
-                                elif self.trader:
-                                    self.send_message(f"⏳ Cerrando posición en <b>{instrument.replace('_','/')}</b>...", )
-                                    result = self.trader.close_single_position(instrument)
-                                    if result.get("status") == "success":
-                                        pl = result.get("pl", 0)
-                                        pl_icon = "✅" if pl >= 0 else "🔴"
-                                        self.send_message(
-                                            f"{pl_icon} <b>Posición Cerrada</b>\n"
-                                            f"{'─'*20}\n"
-                                            f"📊 Par: <b>{instrument.replace('_','/')}</b>\n"
-                                            f"💰 PnL Realizado: <b>${pl:+.2f}</b>\n"
-                                            f"{'─'*20}"
-                                        )
-                                    else:
-                                        self.send_message(f"❌ Error al cerrar {instrument}: {result.get('message')}")
-                        continue
-
-                    # Handle regular text commands
                     if "message" in update and "text" in update["message"]:
                         text = update["message"]["text"]
                         user_id = str(update["message"]["chat"]["id"])

@@ -8,7 +8,8 @@ EnvironmentFile=/home/diego/nivo_fx/ai_stock_sentinel/.env
 User=diego
 WorkingDirectory=/home/diego/nivo_fx/
 # Usamos el python del sistema o venv si existe
-ExecStart=/usr/bin/python3 ai_stock_sentinel/stock_watcher.py
+Environment="PYTHONPATH=/home/diego/nivo_fx"
+ExecStart=/home/diego/nivo_fx/.venv/bin/python ai_stock_sentinel/stock_watcher.py
 Restart=always
 RestartSec=10
 

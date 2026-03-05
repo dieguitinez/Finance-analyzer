@@ -1,0 +1,62 @@
+2026-03-02 20:20:03,695 - INFO - 🚀 Nivo AI Stock Sentinel iniciado.
+2026-03-02 20:20:03,695 - INFO - 📡 Monitoreando 15 activos de IA: ['NVDA', 'TSM', 'ASML', 'ARM', 'AVGO', 'MU', 'AMD', 'SNPS', 'CDNS', 'LRCX', 'AMAT', 'KLAC', 'VRT', 'MRVL', 'SMCI']
+2026-03-02 20:20:03,695 - INFO - 🤖 Modo Autónomo: ACTIVADO
+2026-03-02 20:26:47,258 - INFO - 🚀 Nivo AI Stock Sentinel iniciado.
+2026-03-02 20:26:47,258 - INFO - 📡 Monitoreando 15 activos de IA: ['NVDA', 'TSM', 'ASML', 'ARM', 'AVGO', 'MU', 'AMD', 'SNPS', 'CDNS', 'LRCX', 'AMAT', 'KLAC', 'VRT', 'MRVL', 'SMCI']
+2026-03-02 20:26:47,258 - INFO - 🤖 Modo Autónomo: ACTIVADO
+2026-03-02 20:32:42,428 - INFO - 🚀 Nivo AI Stock Sentinel iniciado.
+2026-03-02 20:32:42,429 - INFO - 📡 Monitoreando 15 activos de IA: ['NVDA', 'TSM', 'ASML', 'ARM', 'AVGO', 'MU', 'AMD', 'SNPS', 'CDNS', 'LRCX', 'AMAT', 'KLAC', 'VRT', 'MRVL', 'SMCI']
+2026-03-02 20:32:42,429 - INFO - 🤖 Modo Autónomo: ACTIVADO
+2026-03-03 06:02:33,182 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 06:02:33,382 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 06:03:37,249 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 06:03:38,453 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 06:15:18,386 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 06:15:18,824 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 06:16:22,734 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 06:16:23,639 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 06:17:27,389 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 06:17:28,755 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 07:15:16,250 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 07:15:16,367 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 07:16:24,835 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 07:16:25,037 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 07:18:35,459 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 07:18:35,589 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 07:54:00,483 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 08:15:35,145 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 08:15:35,784 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 09:44:21,253 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 09:44:22,825 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 09:45:25,097 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 09:45:26,667 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-03 16:06:33,158 - INFO - 🚀 Nivo AI Stock Sentinel iniciado.
+2026-03-03 16:06:33,158 - INFO - 📡 Monitoreando 15 activos de IA: ['NVDA', 'TSM', 'ASML', 'ARM', 'AVGO', 'MU', 'AMD', 'SNPS', 'CDNS', 'LRCX', 'AMAT', 'KLAC', 'VRT', 'MRVL', 'SMCI']
+2026-03-03 16:06:33,158 - INFO - 🤖 Modo Autónomo: ACTIVADO
+2026-03-03 16:06:33,162 - ERROR - ⚠️ Error analizando líder ASML: HTTPSConnectionPool(host='data.alpaca.markets', port=443): Max retries exceeded with url: /v2/stocks/bars?start=2026-02-26T16%3A06%3A33.158785%2B00%3A00&timeframe=1Min&symbols=ASML&limit=10000 (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x71297ca2ecf0>: Failed to resolve 'data.alpaca.markets' ([Errno -2] Name or service not known)"))
+2026-03-03 16:43:37,958 - INFO - 🚀 Nivo AI Stock Sentinel iniciado.
+2026-03-03 16:43:37,958 - INFO - 📡 Monitoreando 15 activos de IA: ['NVDA', 'TSM', 'ASML', 'ARM', 'AVGO', 'MU', 'AMD', 'SNPS', 'CDNS', 'LRCX', 'AMAT', 'KLAC', 'VRT', 'MRVL', 'SMCI']
+2026-03-03 16:43:37,959 - INFO - 🤖 Modo Autónomo: ACTIVADO
+2026-03-03 16:43:37,964 - ERROR - ⚠️ Error analizando líder ASML: HTTPSConnectionPool(host='data.alpaca.markets', port=443): Max retries exceeded with url: /v2/stocks/bars?start=2026-02-26T16%3A43%3A37.959228%2B00%3A00&timeframe=1Min&symbols=ASML&limit=10000 (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x7d7d652b8e60>: Failed to resolve 'data.alpaca.markets' ([Errno -2] Name or service not known)"))
+2026-03-04 15:27:08,001 - INFO - 🚀 Nivo AI Stock Sentinel iniciado.
+2026-03-04 15:27:08,002 - INFO - 📡 Monitoreando 15 activos de IA: ['NVDA', 'TSM', 'ASML', 'ARM', 'AVGO', 'MU', 'AMD', 'SNPS', 'CDNS', 'LRCX', 'AMAT', 'KLAC', 'VRT', 'MRVL', 'SMCI']
+2026-03-04 15:27:08,002 - INFO - 🤖 Modo Autónomo: ACTIVADO
+2026-03-04 15:27:08,446 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 15:27:14,843 - INFO - 🚀 Nivo AI Stock Sentinel iniciado.
+2026-03-04 15:27:14,843 - INFO - 📡 Monitoreando 15 activos de IA: ['NVDA', 'TSM', 'ASML', 'ARM', 'AVGO', 'MU', 'AMD', 'SNPS', 'CDNS', 'LRCX', 'AMAT', 'KLAC', 'VRT', 'MRVL', 'SMCI']
+2026-03-04 15:27:14,843 - INFO - 🤖 Modo Autónomo: ACTIVADO
+2026-03-04 15:27:15,299 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 15:32:35,234 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 15:32:40,656 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 15:54:11,538 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 15:54:12,559 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 15:58:34,606 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 15:58:34,696 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 16:05:02,003 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 16:05:02,094 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 16:07:11,795 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 16:07:12,175 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 16:10:28,457 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 16:10:28,815 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 16:15:27,945 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.
+2026-03-04 16:15:27,962 - INFO - 🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.

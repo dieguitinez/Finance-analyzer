@@ -28,8 +28,10 @@ import gc
 # Ensure flags are globally accessible for Lite Mode detection
 __all__ = ['NivoCortex', 'MarketRegimeDetector', 'TORCH_AVAILABLE', 'HMM_AVAILABLE']
 
-# Suppress standard convergence warnings for cleaner console output
-warnings.filterwarnings("ignore")
+# Suppress known benign hmmlearn init warnings (parameter overwrite is expected behavior)
+warnings.filterwarnings("ignore", message=".*init_params.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*transmat_.*zero sum.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*startprob_.*", category=UserWarning)
 
 
 # ============================================================================
@@ -52,26 +54,57 @@ class MarketRegimeDetector:
         2: "Crash / Extreme Regime"
     }
 
+    # Minimum number of observations required to train HMM reliably
+    MIN_TRAIN_SAMPLES = 150
+
     def __init__(self):
-        self.model = GaussianHMM(n_components=3, covariance_type="full", n_iter=100)
+        # Use 'diag' covariance for stability with small/sparse forex datasets.
+        # 'full' requires many more observations per state to avoid singular matrices.
+        # n_iter=200 + tol=1e-3 gives EM enough iterations to converge on sparse data.
+        # random_state ensures reproducible initialization.
+        self.model = GaussianHMM(
+            n_components=3,
+            covariance_type="diag",
+            n_iter=200,
+            tol=1e-3,
+            random_state=42,
+        )
         self.is_trained = False
+
+    def _prepare_data(self, returns: np.ndarray) -> np.ndarray | None:
+        """
+        Cleans return series and returns a float64 column vector for HMM.
+        Returns None if data is insufficient or degenerate.
+        NOTE: float64 is mandatory here — float32 causes NaN during EM iterations
+        in hmmlearn because intermediate covariance calculations lose precision.
+        """
+        rt_flat = returns.flatten() if hasattr(returns, "flatten") else np.array(returns)
+        # Replace ±inf before converting to float64 to avoid overflow
+        clean = pd.Series(rt_flat.astype(np.float64)).replace([np.inf, -np.inf], np.nan).dropna()
+        if len(clean) < self.MIN_TRAIN_SAMPLES:
+            return None
+        data = clean.values.reshape(-1, 1)
+        # Check for degenerate data: zero or near-zero variance kills HMM covariance matrices
+        if np.std(data) < 1e-10:
+            return None
+        # Final safety check: reject if any NaN/Inf slipped through
+        if not np.all(np.isfinite(data)):
+            return None
+        return data
 
     def train(self, returns: np.ndarray):
         """Train HMM on cleaned return series."""
-        # Ensure 1D for Series conversion
-        rt_flat = returns.flatten() if hasattr(returns, "flatten") else returns
-        clean = pd.Series(rt_flat).replace([np.inf, -np.inf], np.nan).dropna()
-        if len(clean) < 100:
+        data = self._prepare_data(returns)
+        if data is None:
             self.is_trained = False
             return
-        data = clean.values.astype(np.float32).reshape(-1, 1)
         try:
             self.model.fit(data)
             self.is_trained = True
         except Exception as e:
-            # HMM convergence errors or zero variance issues
+            # Only log truly unexpected errors — convergence warnings are suppressed globally
             self.is_trained = False
-            print(f"HMM Training Warning: {e}")
+            print(f"[HMM] Training failed: {e}")
 
     def detect_regime(self, df: pd.DataFrame):
         """
@@ -80,21 +113,18 @@ class MarketRegimeDetector:
         """
         if not self.is_trained:
             returns = df['Close'].pct_change().dropna().values.flatten()
-            if len(returns) >= 100:
+            if len(returns) >= self.MIN_TRAIN_SAMPLES:
                 self.train(returns[-500:])
 
         if not self.is_trained:
             return -1, "Unknown (Insufficient Data)"
 
         returns = df['Close'].pct_change().dropna().values
-        rt_flat = returns.flatten() if hasattr(returns, "flatten") else returns
-        clean = pd.Series(rt_flat).replace([np.inf, -np.inf], np.nan).dropna()
-        if len(clean) == 0:
-            return -1, "Unknown"
-
-        data = clean.values.astype(np.float32).reshape(-1, 1)
+        data = self._prepare_data(returns)
+        if data is None:
+            return -1, "Unknown (Degenerate Data)"
         try:
-            hidden_states = self.model.predict(data)
+            hidden_states = self.model.predict(data)  # data is float64
             current_state = int(hidden_states[-1])
         except Exception as e:
             return -1, f"Unknown (Model Error: {str(e)[:20]})"
@@ -206,6 +236,12 @@ class NivoLSTM:
 
             bull_prob = round(float(prediction) * 100, 1)
 
+            # Guard against NaN or invalid outputs (overflow in rare cases)
+            import math
+            if math.isnan(bull_prob) or not (0.0 <= bull_prob <= 100.0):
+                print(f"[NivoLSTM] ⚠️ NaN/invalid output for {self.pair}. Fallback to 50.0")
+                bull_prob = 50.0
+
             if bull_prob > 55:
                 status = "Bullish Momentum"
             elif bull_prob < 45:
@@ -315,8 +351,8 @@ class NivoCortex:
         self.lstm = NivoLSTM(pair=pair)  # Loads trained .pth if available
         self.order_book = OrderBookAnalyzer(oanda_token, oanda_id)
 
-        # Auto-train HMM if data provided
-        if data is not None and len(data) >= 100:
+        # Auto-train HMM if data provided (threshold matches MarketRegimeDetector.MIN_TRAIN_SAMPLES)
+        if data is not None and len(data) >= 150:
             returns = data['Close'].pct_change().dropna().values
             self.hmm.train(returns[-500:])
 
