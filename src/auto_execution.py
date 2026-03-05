@@ -281,15 +281,33 @@ class NivoAutoTrader:
                 "Content-Type": "application/json"
             }
             
-            # Fetch all open positions
+            # 1. Cancel all pending orders first to prevent ghost executions
+            try:
+                orders_req = requests.get(
+                    f"{base_url}/v3/accounts/{self.account_id}/pendingOrders",
+                    headers=headers, timeout=10
+                )
+                pending_orders = orders_req.json().get("orders", [])
+                for order in pending_orders:
+                    order_id = order.get("id")
+                    if order_id:
+                        requests.put(
+                            f"{base_url}/v3/accounts/{self.account_id}/orders/{order_id}/cancel",
+                            headers=headers, timeout=5
+                        )
+                logger.info(f"[KILL] Canceled {len(pending_orders)} pending orders.")
+            except Exception as e:
+                logger.error(f"[KILL] Error canceling pending orders: {e}")
+
+            # 2. Fetch all open positions
             r = requests.get(
                 f"{base_url}/v3/accounts/{self.account_id}/openPositions",
                 headers=headers, timeout=10
             )
             positions = r.json().get("positions", [])
             
-            if not positions:
-                return {"status": "success", "message": "No open positions found"}
+            if not positions and not pending_orders:
+                return {"status": "success", "message": "No open positions or pending orders found"}
             
             results = []
             for pos in positions:
