@@ -125,23 +125,55 @@ class NivoStockWatcher:
 
     def is_pdt_safe_to_sell(self, symbol: str) -> bool:
         """
-        Retorna True solo si la posición fue comprada en un día ANTERIOR al de hoy.
-        Esto previene day trades con cuentas < $25,000.
+        Intelligent PDT Protection:
+        1. Si se compró ayer o antes, es seguro vender (no gasta count).
+        2. Si se compró HOY, es un Day Trade. Verificamos la API de Alpaca.
+        3. Si Alpaca reporta < 3 day trades, PERMITIMOS la venta.
+        4. Si reporta >= 3, BLOQUEAMOS para proteger la cuenta.
         """
         purchase_date_str = self._pdt_tracker.get(symbol)
+        
+        # Si no hay registro o no es de hoy, es una posición antigua (SAFE)
         if not purchase_date_str:
-            # No hay registro de compra → asumimos que fue en otro ciclo → safe
             return True
+            
         purchase_date = date.fromisoformat(purchase_date_str)
         today = date.today()
-        is_safe = purchase_date < today
-        if not is_safe:
-            self.logger.warning(
-                f"[PDT GUARD] ❌ VENTA BLOQUEADA para {symbol}: "
-                f"fue comprado hoy ({purchase_date_str}). "
-                f"Solo se puede vender a partir de mañana."
-            )
-        return is_safe
+        
+        if purchase_date < today:
+            return True  # Fue comprado ayer o antes, vender no cuenta como day trade
+
+        # --- ES UN DAY TRADE (Comprado HOY) ---
+        try:
+            account = self.trading_client.get_account()
+            dt_count = int(account.daytrade_count)
+            
+            if dt_count < 3:
+                self.logger.info(
+                    f"[PDT GUARD] ⚠️ TOKEN DAY TRADE USADO para {symbol}. "
+                    f"Fueron consumidos {dt_count}/3."
+                )
+                # Opcional: Avisar por Telegram si se está usando un "token" de day trade
+                self.notifier.send_critical_alert(
+                    f"⚠️ <b>Token Day Trade Usado: {symbol}</b>\n"
+                    f"Llevamos {dt_count}/3 day trades en los últimos 5 días."
+                )
+                return True
+            else:
+                self.logger.warning(
+                    f"[PDT GUARD] ❌ VENTA BLOQUEADA para {symbol}: "
+                    f"MÁXIMO PDT ALCANZADO ({dt_count}/3). "
+                    f"La venta se pospone para mañana."
+                )
+                self.notifier.send_critical_alert(
+                    f"❌ <b>Venta Bloqueada por Regla PDT: {symbol}</b>\n"
+                    f"La cuenta ya tiene {dt_count}/3 day trades. Se retendrá hasta mañana."
+                )
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"[PDT GUARD] Error consultando Alpaca API: {e}. Bloqueando por seguridad.")
+            return False
 
     # ─── EARNINGS FILTER ──────────────────────────────────────────────────────
 
