@@ -39,9 +39,11 @@ load_dotenv('ai_stock_sentinel/.env')
 _PDT_TRACKER_FILE = "/tmp/nivo_stock_pdt_tracker.json"
 
 # ─── SECTOR HEALTH CONSTANTS ──────────────────────────────────────────────────
-# SOXX = iShares Semiconductor ETF. Si cae > este % en el día → no operar
+# SOXX = iShares Semiconductor ETF. QQQ = Nasdaq 100
 _SOXX_SYMBOL         = "SOXX"
+_QQQ_SYMBOL          = "QQQ"
 _SECTOR_BEAR_THRESHOLD = -3.0   # Si SOXX baja más de 3% en el día → Cash mode
+_MARKET_BEAR_THRESHOLD = -1.5   # Si QQQ baja más de 1.5% en el día → Cash mode
 
 # ─── EARNINGS CALENDAR API ───────────────────────────────────────────────────
 # API pública de Nasdaq (gratuita, sin key) para earnings próximos
@@ -246,46 +248,61 @@ class NivoStockWatcher:
 
     def is_sector_healthy(self) -> bool:
         """
-        Verifica si el sector de semiconductores (SOXX) está en modo bajista.
-        Si SOXX cae más de 3% en el día → modo Cash (no entrar).
+        Verifica si el mercado general (QQQ) o sector tech (SOXX) están bajistas.
+        Si SOXX cae > 3% o QQQ cae > 1.5% en el día → modo Cash (no entrar).
         """
         try:
-            req = StockLatestQuoteRequest(symbol_or_symbols=[_SOXX_SYMBOL])
+            req = StockLatestQuoteRequest(symbol_or_symbols=[_SOXX_SYMBOL, _QQQ_SYMBOL])
             quote = self.data_client.get_stock_latest_quote(req)
             soxx_quote = quote.get(_SOXX_SYMBOL)
+            qqq_quote = quote.get(_QQQ_SYMBOL)
 
-            if not soxx_quote:
-                self.logger.warning("[SECTOR] No se pudo obtener SOXX. Asumiendo mercado sano.")
+            if not soxx_quote or not qqq_quote:
+                self.logger.warning("[SECTOR] No se pudo obtener SOXX/QQQ. Asumiendo mercado sano.")
                 return True
 
             # Comparar con el cierre anterior usando barras diarias
             bars_req = StockBarsRequest(
-                symbol_or_symbols=[_SOXX_SYMBOL],
+                symbol_or_symbols=[_SOXX_SYMBOL, _QQQ_SYMBOL],
                 timeframe=TimeFrame.Day,
                 start=datetime.now(_ET_TZ) - timedelta(days=3)
             )
             bars = self.data_client.get_stock_bars(bars_req)
-            soxx_bars = bars.df
-            if soxx_bars.empty or len(soxx_bars) < 2:
-                return True
+            
+            # Chequeo SOXX
+            if not bars.df.empty and _SOXX_SYMBOL in bars.df.index.levels[0]:
+                soxx_bars = bars.df.xs(_SOXX_SYMBOL, level='symbol')
+                if len(soxx_bars) >= 2:
+                    prev_close = float(soxx_bars['close'].iloc[-2])
+                    current_price = float(soxx_quote.ask_price or soxx_quote.bid_price)
+                    daily_change_pct = ((current_price - prev_close) / prev_close) * 100
+                    if daily_change_pct <= _SECTOR_BEAR_THRESHOLD:
+                        self.logger.warning(
+                            f"[SECTOR GUARD] 🔴 SOXX cayó {daily_change_pct:.2f}% hoy. Modo Cash activado."
+                        )
+                        self.notifier.send_critical_alert(
+                            f"SOXX cayó {daily_change_pct:.2f}% hoy.\n<b>Modo Cash activado.</b> No se abrirán posiciones nuevas."
+                        )
+                        return False
+                    self.logger.info(f"[SECTOR] ✅ SOXX: {daily_change_pct:+.2f}%")
 
-            prev_close = float(soxx_bars['close'].iloc[-2])
-            current_price = float(soxx_quote.ask_price or soxx_quote.bid_price)
-            daily_change_pct = ((current_price - prev_close) / prev_close) * 100
+            # Chequeo QQQ
+            if not bars.df.empty and _QQQ_SYMBOL in bars.df.index.levels[0]:
+                qqq_bars = bars.df.xs(_QQQ_SYMBOL, level='symbol')
+                if len(qqq_bars) >= 2:
+                    prev_close = float(qqq_bars['close'].iloc[-2])
+                    current_price = float(qqq_quote.ask_price or qqq_quote.bid_price)
+                    daily_change_pct = ((current_price - prev_close) / prev_close) * 100
+                    if daily_change_pct <= _MARKET_BEAR_THRESHOLD:
+                        self.logger.warning(
+                            f"[MARKET GUARD] 🔴 QQQ cayó {daily_change_pct:.2f}% hoy. Modo Cash activado."
+                        )
+                        self.notifier.send_critical_alert(
+                            f"QQQ cayó {daily_change_pct:.2f}% hoy.\n<b>Modo Cash activado.</b> No se abrirán posiciones nuevas."
+                        )
+                        return False
+                    self.logger.info(f"[MARKET] ✅ QQQ: {daily_change_pct:+.2f}%")
 
-            if daily_change_pct <= _SECTOR_BEAR_THRESHOLD:
-                self.logger.warning(
-                    f"[SECTOR GUARD] 🔴 SOXX cayó {daily_change_pct:.2f}% hoy. "
-                    f"Umbral: {_SECTOR_BEAR_THRESHOLD}%. Modo Cash activado."
-                )
-                # Critical system alert — this one IS sent to Telegram
-                self.notifier.send_critical_alert(
-                    f"SOXX cayó {daily_change_pct:.2f}% hoy.\n"
-                    f"<b>Modo Cash activado.</b> No se abrirán posiciones nuevas."
-                )
-                return False
-
-            self.logger.info(f"[SECTOR] ✅ SOXX: {daily_change_pct:+.2f}% — Mercado sano.")
             return True
 
         except Exception as e:
@@ -479,12 +496,12 @@ class NivoStockWatcher:
             self.execute_queue()
             return
 
-        print(f"\n🔍 Escaneo ({session_type}): {time.strftime('%H:%M:%S')}")
+        self.logger.info(f"🔍 Escaneo ({session_type}): {time.strftime('%H:%M:%S')}")
 
         # ─── SECTOR HEALTH CHECK (solo en horario de mercado) ─────────────────
         if session_type == "LIVE":
             if not self.is_sector_healthy():
-                print("🔴 Sector bajista. Modo Cash — no se abren posiciones nuevas.")
+                self.logger.info("🔴 Sector/Mercado bajista. Modo Cash — no se abren posiciones nuevas.")
                 return
 
         # ─── EARNINGS CALENDAR (cache compartido para todos los símbolos) ───
@@ -510,7 +527,7 @@ class NivoStockWatcher:
                     continue
                 current_price = float(df['close'].iloc[-1])
                 signal, signal_reason = self.cerebro.analyze_momentum(df, symbol)
-                print(f"💎 {symbol}: ${current_price:.2f} | {signal_reason}")
+                self.logger.info(f"💎 {symbol}: ${current_price:.2f} | {signal_reason}")
 
                 # ─── MANTENIMIENTO DE POSICIONES ACTIVAS (ESCUDO OCO DÍA 2) ───
                 if session_type == "LIVE" and self.executor.has_open_position(symbol):
@@ -524,7 +541,7 @@ class NivoStockWatcher:
                                 # OCO shield is automatic maintenance — no Telegram needed
                                 self.logger.info(f"[OCO] Escudo Día 2 activado: {symbol} | TP:{tp_price} | SL:{sl_price}")
                     else:
-                        print(f"⏳ {symbol}: Posición en Día 1. Reteniendo Brackets por regla PDT.")
+                        self.logger.info(f"⏳ {symbol}: Posición en Día 1. Reteniendo Brackets por regla PDT.")
 
                 if not signal:
                     continue
@@ -599,7 +616,7 @@ class NivoStockWatcher:
                     self._save_queue()
 
             except Exception as e:
-                print(f"❌ Error analizando {symbol}: {e}")
+                self.logger.error(f"❌ Error analizando {symbol}: {e}")
 
     def execute_queue(self):
         """
@@ -681,7 +698,7 @@ class NivoStockWatcher:
                 executed += 1
                 time.sleep(1)
             except Exception as e:
-                print(f"Error ejecutando {symbol}: {e}")
+                self.logger.error(f"Error ejecutando {symbol}: {e}")
 
         self.order_queue = []
         self._save_queue()
@@ -693,10 +710,10 @@ class NivoStockWatcher:
         try:
             while True:
                 self.scan_market()
-                print("-" * 30)
+                self.logger.info("-" * 30)
                 time.sleep(60)  # Escaneo por minuto
         except KeyboardInterrupt:
-            print("\n🛑 Vigilancia detenida por el usuario.")
+            self.logger.info("\n🛑 Vigilancia detenida por el usuario.")
 
 
 if __name__ == "__main__":
