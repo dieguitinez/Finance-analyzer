@@ -224,18 +224,18 @@ def run_headless_cycle():
             # DOUBLE CONFIRMATION FILTER
             # 1. AI Confirmation (Neural Vector must show REAL conviction, not just >50%)
             # LSTM returns 45-55% in uncertain markets; require true directional bias.
-            ai_agreement = (raw_signal == "BUY" and lstm_prob > 55) or (raw_signal == "SELL" and lstm_prob < 45)
+            ai_agreement = (raw_signal == "BUY" and lstm_prob >= 55) or (raw_signal == "SELL" and lstm_prob <= 45)
             
             # 2. News Confirmation (Sentiment must be CLEARLY favorable, not just neutral)
             # Avoid trades where sentiment is even slightly opposing.
             news_agreement = (raw_signal == "BUY" and sentiment_score >= 52) or (raw_signal == "SELL" and sentiment_score <= 48)
             
             if not ai_agreement:
-                logger.info(f"🛡️ [QUALITY FILTER] VETO IA: El vector neuronal detecta dirección contraria ({lstm_prob}%). Operación descartada.")
+                logger.info(f"🛡️ [QUALITY FILTER] VETO IA: Convicción LSTM insuficiente ({lstm_prob:.2f}%). Se requiere >55% (BUY) o <45% (SELL). Operación DESCARTADA.")
                 return False
             
             if not news_agreement:
-                logger.info(f"🛡️ [QUALITY FILTER] VETO NOTICIAS: El sentimiento del mercado ({sentiment_score}) se opone a la tendencia. Operación descartada.")
+                logger.info(f"🛡️ [QUALITY FILTER] VETO NOTICIAS: Sentimiento global ({sentiment_score}) es mixto o se opone a la tendencia. Se requiere >=52 (BUY) o <=48 (SELL). Operación DESCARTADA.")
                 return False
 
             logger.info(f"🔥 [MAX CONVICTION] Signal: {raw_signal} | AI: {lstm_prob}% | News: {sentiment_score} | DOM: {dom_outlook}. Executing...")
