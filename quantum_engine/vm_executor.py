@@ -163,7 +163,17 @@ def run_headless_cycle():
                 _long_u = float(_pos.get("long", {}).get("units", 0))
                 _short_u = float(_pos.get("short", {}).get("units", 0))
                 _units = _long_u if _long_u != 0 else _short_u
-                _pos_snapshot[_instr] = {"units": _units}
+                
+                # Fetch deeper position details for accurate Trailing Stop reporting
+                _side_data = _pos.get("long", {}) if _long_u != 0 else _pos.get("short", {})
+                _entry_price = float(_side_data.get("averagePrice", 0.0))
+                _unrealized_pl = float(_pos.get("unrealizedPL", 0.0))
+                
+                _pos_snapshot[_instr] = {
+                    "units": _units,
+                    "entry_price": _entry_price,
+                    "pnl_usd": _unrealized_pl
+                }
             with open(_pos_cache_path, "w") as f:
                 f.write(json.dumps(_pos_snapshot))
 
@@ -280,6 +290,8 @@ def run_headless_cycle():
                     )
             except Exception as _e:
                 logger.error(f"Execution Error: {_e}")
+        else:
+            logger.info(f"💤 [{oanda_symbol}] Cycle complete. No valid Trade Signal triggered (Raw: {raw_signal}, Sentiment: {sentiment_score}).")
 
     except Exception as e:
         logger.error(f"VM Cycle Error: {str(e)}", exc_info=True)

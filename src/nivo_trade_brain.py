@@ -34,7 +34,15 @@ class NivoTradeBrain:
         # 4. Standard EMAs just for visual context in the UI (Not used for triggering)
         self.df['EMA_50'] = self.df['Close'].ewm(span=50, adjust=False).mean()
         self.df['EMA_200'] = self.df['Close'].ewm(span=200, adjust=False).mean()
-        self.df['RSI'] = 50 # Dummy values to prevent UI crashes if it looks for RSI
+        
+        # Calculate real RSI using pandas_ta
+        import pandas_ta as ta
+        self.df.ta.rsi(length=14, append=True)
+        if 'RSI_14' in self.df.columns:
+            self.df.rename(columns={'RSI_14': 'RSI'}, inplace=True)
+        else:
+            self.df['RSI'] = 50
+            
         self.df['ADX'] = np.nan
 
     def analyze_market(self):
