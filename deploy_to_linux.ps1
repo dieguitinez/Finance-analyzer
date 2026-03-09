@@ -67,9 +67,11 @@ tar -xzf $ArchiveName -C $RemotePath
 rm -f $ArchiveName
 # Fix Windows line endings in shell scripts
 find $RemotePath -name "*.sh" -exec sed -i 's/\r$//' {} +
-echo '---- Restarting Services ----'
-echo "198824" | sudo -S systemctl restart nivo-dashboard.service
+echo '---- Reloading Daemon & Restarting Services ----'
+echo "198824" | sudo -S systemctl daemon-reload
+echo "198824" | sudo -S systemctl restart nivo-sentinel.timer
 echo "198824" | sudo -S systemctl restart nivo-sentinel.service
+echo "198824" | sudo -S systemctl restart nivo-dashboard.service
 echo "198824" | sudo -S systemctl restart stock-watcher.service
 echo "198824" | sudo -S systemctl restart stock-bot-tg.service
 echo "198824" | sudo -S systemctl restart nivo-bot.service
