@@ -458,6 +458,14 @@ class NivoStockWatcher:
 
     def scan_market(self):
         """Escanea 24/7 con todos los filtros de seguridad activados."""
+        
+        # ─── PANIC SWITCH CHECK (Integrado con Telegram Bot) ───────────────
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        panic_lock_path = os.path.join(project_root, ".panic_lock")
+        if os.path.exists(panic_lock_path):
+            self.logger.warning("🛑 [PANIC SWITCH ACTIVO] El scanner está bloqueado por orden del usuario (.panic_lock). Use /resume en Telegram para restaurar.")
+            return
+
         is_active, session_type, reason = self.is_market_open()
         if not is_active:
             self.logger.debug(f"🌖 {reason}. Sentinel en reposo.")

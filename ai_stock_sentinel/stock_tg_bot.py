@@ -257,7 +257,15 @@ class NivoStockBot:
                     try:
                         purchase_date = date.fromisoformat(purchase_date_str)
                         if purchase_date >= today:
-                            is_safe = False
+                            # Comprado HOY - Consultar contador de Day Trades en Alpaca
+                            try:
+                                account = self.trading_client.get_account()
+                                dt_count = int(account.daytrade_count)
+                                if dt_count >= 3:
+                                    is_safe = False # Bloqueado, reached PDT limit
+                            except Exception as e:
+                                logger.error(f"Error checking daytrade_count in panic: {e}")
+                                is_safe = False # Falla segura (bloquear)
                     except Exception:
                         pass
                         
