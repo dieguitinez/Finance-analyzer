@@ -83,3 +83,50 @@ class StockExecutionEngine:
                 return False
             print(f"⚠️ Error checking open position for {symbol}: {e}")
             return True
+
+    def has_pending_orders(self, symbol) -> bool:
+        """
+        Consulta si existen órdenes pendientes (Stop Loss / Take Profit) abiertas para el símbolo.
+        """
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+            orders = self.client.get_orders(req)
+            return len(orders) > 0
+        except Exception as e:
+            print(f"⚠️ Error checking pending orders for {symbol}: {e}")
+            return False
+
+    def place_oco_shield(self, symbol, tp_price, sl_price):
+        """
+        Coloca una orden OCO (Take Profit y Stop Loss) para una posición existente.
+        """
+        try:
+            position = self.client.get_open_position(symbol_or_asset_id=symbol)
+            qty = float(position.qty)
+            
+            from alpaca.trading.requests import LimitOrderRequest
+            from alpaca.trading.models import StopLossRequest
+            from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+
+            # Determinar lado contrario para cerrar
+            side = OrderSide.SELL if qty > 0 else OrderSide.BUY
+            abs_qty = abs(qty)
+
+            # Orden Limit principal (Take Profit) con Stop Loss adjunto (OCO)
+            order_data = LimitOrderRequest(
+                symbol=symbol,
+                qty=abs_qty,
+                side=side,
+                time_in_force=TimeInForce.GTC,
+                limit_price=tp_price,
+                order_class=OrderClass.OCO,
+                stop_loss=StopLossRequest(stop_price=sl_price)
+            )
+            order = self.client.submit_order(order_data=order_data)
+            print(f"🛡️ Escudo OCO activado para {symbol}! Order ID: {order.id}")
+            return order
+        except Exception as e:
+            print(f"❌ Error colocando escudo OCO para {symbol}: {e}")
+            return None

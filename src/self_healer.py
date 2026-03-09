@@ -57,8 +57,13 @@ class NivoSelfHealer:
             Sé directo. Máximo 3 o 4 líneas.
             """
             
-            # Resilient model cascade
-            model_cascade = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-lite']
+            # Resilient model cascade (User Hierarchy)
+            model_cascade = [
+                'gemini-2.5-flash', 
+                'gemini-3.1-flash-lite', 
+                'gemini-2.5-pro', 
+                'gemini-2.0-flash'
+            ]
             
             response_text = None
             for model_name in model_cascade:

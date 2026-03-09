@@ -35,18 +35,28 @@ class NivoTelegramBot:
         self.env = "practice" if "practice" in os.getenv("OANDA_BASE_URL", "practice") else "live"
         self.trader = NivoAutoTrader(self.api_key, self.account_id, environment=self.env) if self.api_key else None
 
-    def send_message(self, text):
+    def send_message(self, text, reply_markup=None):
         url = f"{self.api_url}/sendMessage"
         payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
         try:
             requests.post(url, json=payload)
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 
+    def delete_message(self, message_id):
+        url = f"{self.api_url}/deleteMessage"
+        payload = {"chat_id": self.chat_id, "message_id": message_id}
+        try:
+            requests.post(url, json=payload, timeout=5)
+        except Exception as e:
+            logger.error(f"Error deleting message {message_id}: {e}")
+
     def handle_command(self, command, args=[]):
         command = command.lower()
         
-        if command == "/start" or command == "/help":
+        if command in ["/start", "/help", "/ayuda"]:
             help_text = (
                 "🤖 <b>Nivo FX - Command Center</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
@@ -56,18 +66,26 @@ class NivoTelegramBot:
                 "🔹 /report EUR_USD - Diagnóstico interno completo (cerebro del Bot)\n"
                 "🔹 /close  - Cerrar una posición específica\n"
                 "🔹 /market - Ver volatilidad y pares calientes\n"
-                "🔹 /scan - Ver pares vigilados por el Sentinel\n"
                 "🔹 /balance - Ver Equidad y Margen disponible\n"
                 "🔹 /dashboard - Link a la Web Dashboard\n"
                 "🔹 /oanda - Link a OANDA Hub\n"
-                "🛑 /kill - BOTÓN DE PÁNICO (Cierra todo y bloquea)\n"
-                "🟢 /resume - Reanudar operación bloqueada\n"
+                "🛑 /kill (🛑 PANIC) - BOTÓN DE PÁNICO (Cierra todo y bloquea)\n"
+                "🟢 /resume (▶️ RESUME) - Reanudar operación bloqueada\n"
                 "🔹 /help - Mostrar este mensaje\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>Actualizado: 2026-03-03 22:30</i>\n"
+                "<i>Actualizado: 2026-03-05</i>\n"
                 "<i>Nivo Partners Institutional Suite</i>"
             )
-            self.send_message(help_text)
+            keyboard_markup = {
+                "keyboard": [
+                    [{"text": "/status"}, {"text": "/entries"}, {"text": "/balance"}],
+                    [{"text": "/market"}, {"text": "/close"}, {"text": "/ayuda"}],
+                    [{"text": "🛑 PANIC"}, {"text": "▶️ RESUME"}]
+                ],
+                "resize_keyboard": True,
+                "is_persistent": True
+            }
+            self.send_message(help_text, reply_markup=keyboard_markup)
 
         elif command == "/dashboard":
             dashboard_url = os.getenv("DASHBOARD_URL", "https://finance-analyzer-fx.streamlit.app")
@@ -170,16 +188,7 @@ class NivoTelegramBot:
             )
             self.send_message(msg)
 
-        elif command == "/scan":
-            watchlist = os.getenv("WATCHLIST", "No definido").split(',')
-            msg = "📡 <b>Sentinel Scanning:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-            for pair in watchlist:
-                msg += f"• {pair.strip().replace('_', '/')}\n"
-            msg += "━━━━━━━━━━━━━━━━━━━━\n"
-            msg += "Estado: 🟢 Activo (1min heartbeat)"
-            self.send_message(msg)
-
-        elif command == "/kill":
+        elif command in ["/kill", "/panic", "� panic"]:
             self.send_message("🚨 <b>PROTOCOL: EMERGENCY KILL SWITCH</b>\nIniciando secuencia de detención total...")
             try:
                 # 1. Create Persistent Lock File
@@ -357,6 +366,26 @@ class NivoTelegramBot:
         else:
             self.send_message(f"❓ Comando desconocido: {command}. Escribe /help para ayuda.")
 
+    def _execute_panic(self):
+        self.send_message("🚨 <b>PROTOCOL: EMERGENCY KILL SWITCH</b>\nIniciando secuencia de detención total...")
+        try:
+            # 1. Create Persistent Lock File
+            lock_file = os.path.join(_project_root, ".panic_lock")
+            with open(lock_file, "w") as f:
+                f.write(f"Killed by Telegram at {time.ctime()}")
+            
+            # 2. Force Close All Positions
+            if getattr(self, "trader", None):
+                res = self.trader.close_all_positions()
+                if res.get("status") == "success":
+                    self.send_message("✅ <b>SISTEMA DETENIDO.</b> Todas las posiciones han sido cerradas y el motor de ejecución está bloqueado.")
+                else:
+                    self.send_message(f"⚠️ Motor bloqueado, pero hubo un error al cerrar posiciones: {res.get('message')}")
+            else:
+                self.send_message("✅ <b>MOTOR BLOQUEADO.</b> (No se detectó configuración de OANDA para cerrar posiciones).")
+        except Exception as e:
+            self.send_message(f"❌ Error crítico en Protocolo Kill: {e}")
+
     def poll_updates(self):
         url = f"{self.api_url}/getUpdates"
         params = {"offset": self.last_update_id + 1, "timeout": 30}
@@ -387,7 +416,15 @@ class NivoTelegramBot:
 
                         # Security: only authorized chat
                         if user_id == self.chat_id:
-                            if callback_data.startswith("/"):
+                            if callback_data == "panic_cancel":
+                                if "message" in cq and "message_id" in cq["message"]:
+                                    self.delete_message(cq["message"]["message_id"])
+                                self.send_message("✅ <b>Pánico cancelado.</b> El Sentinel sigue operando normalmente.")
+                            elif callback_data == "panic_confirm":
+                                if "message" in cq and "message_id" in cq["message"]:
+                                    self.delete_message(cq["message"]["message_id"])
+                                self._execute_panic()
+                            elif callback_data.startswith("/"):
                                 # Command button (e.g. /kill)
                                 parts = callback_data.split()
                                 self.handle_command(parts[0], parts[1:])
@@ -427,9 +464,11 @@ class NivoTelegramBot:
                             logger.warning(f"Unauthorized access attempt from user {user_id}")
                             continue
                         
-                        if text.startswith("/"):
-                            parts = text.split()
-                            self.handle_command(parts[0], parts[1:])
+                        text_lower = text.lower().strip()
+                        if text_lower.startswith("/") or text_lower in ["🛑 panic", "▶️ resume"]:
+                            parts = text_lower.split()
+                            cmd = text_lower if text_lower in ["🛑 panic", "▶️ resume"] else parts[0]
+                            self.handle_command(cmd, parts[1:])
             else:
                 logger.error(f"Polling error: {response.status_code}")
         except Exception as e:

@@ -392,41 +392,19 @@ class NivoAutoTrader:
             logger.error(f"[ERROR] close_single_position failed: {e}")
             return {"status": "error", "message": str(e)}
 
-    def calculate_position_size(self, instrument: str, stop_loss_pips: float):
-        """Calculate units based on 1% risk percentage and stop loss distance."""
+    def calculate_position_size(self, stop_loss_pips):
+        """Calculate units based on risk percentage and stop loss distance."""
+        # Simplified for EUR/USD. In production, this would account for exchange rates.
         try:
-            # 1. Get Account Balance
             response = self.ctx.account.summary(self.account_id)
-            if response.status != 200:
-                logger.error(f"Could not fetch account summary for sizing: {response.status}")
-                return 1000
-                
-            account_summary = response.get("account")
-            balance = float(account_summary.balance)
-            
-            # 2. Daily Risk Amount (1% of Balance)
+            balance = float(response.get("account").balance)
             risk_amount = balance * self.capital_at_risk_per_trade
             
-            # 3. Pip Multiplier (JPY vs Others)
-            # For sizing: Units = Risk_Amount / (SL_Pips * Pip_Value_Per_Unit)
-            # For EURUSD: Units = Risk / (SL_Pips * 0.0001)
-            # For USDJPY: Units = Risk / (SL_Pips * 0.01)
-            multiplier = 0.01 if "JPY" in instrument else 0.0001
-            
-            # 4. Final Sizing
-            if stop_loss_pips <= 0:
-                logger.warning(f"Invalid SL pips ({stop_loss_pips}) for sizing. Using minimum.")
-                return 1000
-                
-            units = int(risk_amount / (stop_loss_pips * multiplier))
-            
-            # Safety Cap: Don't leverage more than 20:1 on a single trade
-            margin_cap = int(balance * 20)
-            final_units = min(max(units, 1), margin_cap)
-            
-            logger.info(f"📊 [RISK MGR] Balance: ${balance:.2f} | Risk: ${risk_amount:.2f} | SL Pips: {stop_loss_pips:.1f} | Sized Units: {final_units}")
-            return final_units
-            
-        except Exception as e:
-            logger.error(f"Error in calculate_position_size: {e}")
+            # 1 pip = 0.0001 (for EUR/USD)
+            pip_value = 10  # Standard lot (100k) pip value is $10
+            # risk_amount / (stop_loss_pips * pip_value_per_unit)
+            # This is a placeholder for actual math which depends on currency
+            units = int(risk_amount / (stop_loss_pips * 0.0001))
+            return units
+        except:
             return 1000 # Default micro-lot for safety

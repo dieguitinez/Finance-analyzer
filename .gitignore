@@ -39,3 +39,11 @@ Thumbs.db
 # Deployment
 *.tar.gz
 notebooklmcontext/
+"archivos contexto para agente/"
+
+# Nivo FX Cleanup (Local/System stuff)
+.agent/
+tmp/
+venv~/
+nohup.out
+*.log

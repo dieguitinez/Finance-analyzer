@@ -69,6 +69,14 @@ class NivoStockBot:
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 
+    def delete_message(self, message_id):
+        url = f"{self.api_url}/deleteMessage"
+        payload = {"chat_id": self.chat_id, "message_id": message_id}
+        try:
+            requests.post(url, json=payload, timeout=5)
+        except Exception as e:
+            logger.error(f"Error deleting message {message_id}: {e}")
+
     def handle_command(self, command, args=[], sender_id=""):
         command = command.lower().split("@")[0]  # Handle /cmd@botname format
         dashboard_url = "https://app.alpaca.markets/paper/dashboard"
@@ -81,25 +89,25 @@ class NivoStockBot:
                 "🔹 /analizar - 🧠 Análisis IA instantáneo de un activo\n"
                 "🔹 /status - Posiciones abiertas en Alpaca\n"
                 "🔹 /saldo - Balance y poder de compra\n"
-                "🔹 /kill - 🛑 Cerrar TODAS las posiciones (emergencia)\n"
+                "🔹 /kill (🛑 PANIC) - Cerrar TODAS las posiciones\n"
                 "🔹 /watchlist - Las 15 acciones vigiladas\n"
                 "🔹 /dashboard - Link a Alpaca Dashboard\n"
-                "🔹 /chatid - Ver tu Chat ID (para configuración)\n"
                 "🔹 /ayuda - Este mensaje\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🌐 <a href='{dashboard_url}'>Alpaca Web Console</a>\n\n"
                 "<i>Nivo Partners Stock Intelligence</i>"
             )
-            self.send_message(help_text)
+            keyboard_markup = {
+                "keyboard": [
+                    [{"text": "/status"}, {"text": "/saldo"}],
+                    [{"text": "/analizar"}, {"text": "/watchlist"}],
+                    [{"text": "🛑 PANIC"}, {"text": "▶️ RESUME"}]
+                ],
+                "resize_keyboard": True,
+                "is_persistent": True
+            }
+            self.send_message(help_text, reply_markup=keyboard_markup)
 
-        elif command == "/chatid":
-            # Diagnostic: tells user their exact chat ID so they can configure .env
-            self.send_message(
-                f"🔍 <b>Tu Chat ID:</b> <code>{sender_id}</code>\n\n"
-                f"El bot está configurado para: <code>{self.chat_id}</code>\n\n"
-                "Si son diferentes, actualiza <b>STOCK_TELEGRAM_CHAT_ID</b> en "
-                "<code>ai_stock_sentinel/.env</code> con tu Chat ID."
-            )
 
         elif command == "/dashboard":
             self.send_message(f"📊 <b>Alpaca Web Dashboard:</b>\n{dashboard_url}")
@@ -169,32 +177,27 @@ class NivoStockBot:
                 reply_markup=reply_markup
             )
 
-        elif command == "/kill":
-            if not self.trading_client:
+        elif command in ["/kill", "/panic", "🛑 panic"]:
+            if not getattr(self, "trading_client", None):
                 self.send_message("❌ Alpaca API no configurada. Verifica ALPACA_API_KEY en .env")
                 return
-            try:
-                # Create .panic_lock to stop the watcher
-                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                panic_lock_path = os.path.join(project_root, ".panic_lock")
-                with open(panic_lock_path, "w") as f:
-                    f.write("LOCKED")
+            
+            keyboard = [
+                [{"text": "⚠️ SÍ, EJECUTAR PÁNICO", "callback_data": "panic_confirm"}],
+                [{"text": "❌ CANCELAR", "callback_data": "panic_cancel"}]
+            ]
+            reply_markup = {"inline_keyboard": keyboard}
+            self.send_message(
+                "🚨 <b>¿ESTÁS COMPLETAMENTE SEGURO?</b>\n\n"
+                "Esta acción:\n"
+                "1. Cerrará todas tus posiciones maduras (Día 2+) a precio de mercado.\n"
+                "2. Congelará el bot (detendrá nuevas compras).\n\n"
+                "<i>Las posiciones de hoy se mantendrán abiertas para protegerte de penalizaciones PDT.</i>\n\n"
+                "<b>¿Proceder con la emergencia?</b>",
+                reply_markup=reply_markup
+            )
 
-                positions = self.trading_client.get_all_positions()
-                if not positions:
-                    self.send_message("🛑 <b>KILL SWITCH ACTIVO</b>\nNo hay posiciones, pero el scanner ha sido detenido.")
-                    return
-                n = len(positions)
-                self.trading_client.close_all_positions(cancel_orders=True)
-                self.send_message(
-                    f"🛑 <b>KILL SWITCH EJECUTADO</b>\n"
-                    f"Cerrando {n} posición(es) en Alpaca Paper.\n"
-                    f"Scanner detenido via .panic_lock."
-                )
-            except Exception as e:
-                self.send_message(f"❌ Error al ejecutar kill switch: {e}")
-
-        elif command == "/resume":
+        elif command in ["/resume", "▶️ resume"]:
             try:
                 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 panic_lock_path = os.path.join(project_root, ".panic_lock")
@@ -209,12 +212,94 @@ class NivoStockBot:
         else:
             self.send_message(f"❓ Comando desconocido: {command}. Escribe /ayuda.")
 
+    def _execute_panic(self):
+        try:
+            # Create .panic_lock to stop the watcher
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            panic_lock_path = os.path.join(project_root, ".panic_lock")
+            with open(panic_lock_path, "w") as f:
+                f.write("LOCKED")
+
+            positions = self.trading_client.get_all_positions()
+            if not positions:
+                self.send_message("🛑 <b>PANIC SWITCH ACTIVO</b>\nNo hay posiciones, pero el scanner ha sido detenido.")
+                return
+
+            # Read PDT tracker to protect Day-1 positions
+            pdt_tracker = {}
+            try:
+                import json
+                pdt_file = "/tmp/nivo_stock_pdt_tracker.json"
+                if os.path.exists(pdt_file):
+                    with open(pdt_file, "r") as f:
+                        pdt_tracker = json.load(f)
+            except Exception as e:
+                logger.error(f"Error reading PDT tracker for Panic: {e}")
+
+            from datetime import date
+            today = date.today()
+            
+            closed = 0
+            kept = 0
+            kept_symbols = []
+
+            for pos in positions:
+                try:
+                    # Siempre cancelar órdenes pendientes (Limit/Stop) para evitar compras accidentales
+                    self.trading_client.cancel_orders(symbol_or_asset_id=pos.symbol)
+                except Exception:
+                    pass
+                    
+                purchase_date_str = pdt_tracker.get(pos.symbol)
+                is_safe = True
+                
+                if purchase_date_str:
+                    try:
+                        purchase_date = date.fromisoformat(purchase_date_str)
+                        if purchase_date >= today:
+                            is_safe = False
+                    except Exception:
+                        pass
+                        
+                if is_safe:
+                    self.trading_client.close_position(symbol_or_asset_id=pos.symbol)
+                    closed += 1
+                else:
+                    kept += 1
+                    kept_symbols.append(pos.symbol)
+
+            msg = (
+                f"🛑 <b>PANIC SWITCH EJECUTADO</b>\n"
+                f"Cerrando {closed} posición(es) maduras (Día 2+).\n"
+                f"Scanner detenido via .panic_lock."
+            )
+            if kept > 0:
+                symbols_str = ", ".join(kept_symbols)
+                msg += f"\n\n🛡️ <b>Protección PDT:</b> Se mantuvieron {kept} posiciones abiertas ({symbols_str}) porque fueron compradas HOY. Se cerrarán a partir de mañana."
+
+            self.send_message(msg)
+        except Exception as e:
+            self.send_message(f"❌ Error al ejecutar panic switch: {e}")
+
     def _handle_callback_query(self, query):
         data = query.get("data", "")
         sender_id = str(query.get("message", {}).get("chat", {}).get("id"))
+        msg_id = query.get("message", {}).get("message_id")
         
         if self.chat_id and sender_id != self.chat_id:
             return  # Unauthorized
+
+        if data == "panic_cancel":
+            if msg_id:
+                self.delete_message(msg_id)
+            self.send_message("✅ <b>Pánico cancelado.</b> El bot sigue operando normalmente.")
+            return
+
+        if data == "panic_confirm":
+            if msg_id:
+                self.delete_message(msg_id)
+            self._execute_panic()
+            return
 
         if data.startswith("analyze_"):
             symbol = data.split("_")[1]
@@ -284,14 +369,15 @@ class NivoStockBot:
                                 f"(configured={self.chat_id}). "
                                 f"Update ai_stock_sentinel/.env if this is you."
                             )
-                            # Still respond to /chatid so user can self-diagnose
-                            if text.strip().startswith("/chatid"):
-                                self.handle_command("/chatid", sender_id=sender_id)
                             continue
 
-                        if text.startswith("/"):
-                            parts = text.split()
-                            self.handle_command(parts[0], parts[1:], sender_id=sender_id)
+                        # Handle text commands and button presses
+                        text_lower = text.lower().strip()
+                        if text_lower.startswith("/") or text_lower in ["🛑 panic", "▶️ resume"]:
+                            parts = text_lower.split()
+                            # Use the full text for our custom buttons, or split parts for slash commands
+                            cmd = text_lower if text_lower in ["🛑 panic", "▶️ resume"] else parts[0]
+                            self.handle_command(cmd, parts[1:], sender_id=sender_id)
                             
                     elif "callback_query" in update:
                         # Handle inline button clicks

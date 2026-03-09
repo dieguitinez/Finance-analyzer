@@ -169,12 +169,10 @@ class QuantumBridge:
         if q_regime_state == 0:
             # Low Volatility (most bullish regime): keep base_diff intact.
             # Only dampen the noisy quantum component to avoid overreacting to calm markets.
-            # BUG FIX: Previously applied base_diff *= 0.8 here which artificially
-            # suppressed bullish scores in the calmest regime → SELL bias introduced.
-            q_impact = q_diff * 0.3
+            q_impact = q_diff * 0.6  # Increased from 0.3 to give LSTM more weight vs weak tech/fund
         else:
             # Trending / Crash regime: boost quantum impact for stronger conviction
-            q_impact = q_diff * 0.7
+            q_impact = q_diff * 1.2  # Increased from 0.7 to heavily favor AI momentum
             
         # --- 4. Final Aggregation & Weighting ---
         final_diff = (base_diff + q_impact) * q_position_weight * reflex_mult

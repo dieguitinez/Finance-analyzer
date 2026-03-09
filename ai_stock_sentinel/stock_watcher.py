@@ -377,10 +377,25 @@ class NivoStockWatcher:
         for symbol in self.watchlist:
             try:
                 df = self.get_historical_data(symbol)
+                if df.empty:
+                    self.logger.warning(f"⚠️ No hay datos para {symbol}. Saltando...")
+                    continue
+                current_price = float(df['close'].iloc[-1])
                 signal, signal_reason = self.cerebro.analyze_momentum(df, symbol)
-                current_price = df['close'].iloc[-1]
-
                 print(f"💎 {symbol}: ${current_price:.2f} | {signal_reason}")
+
+                # ─── MANTENIMIENTO DE POSICIONES ACTIVAS (ESCUDO OCO DÍA 2) ───
+                if session_type == "LIVE" and self.executor.has_open_position(symbol):
+                    if self.is_pdt_safe_to_sell(symbol):
+                        if not self.executor.has_pending_orders(symbol):
+                            self.logger.info(f"🛡️ Posición {symbol} en Día 2 sin escudo. Activando OCO.")
+                            sl_price = round(current_price * 0.98, 2)
+                            tp_price = round(current_price * 1.05, 2)
+                            if self.autonomous_mode:
+                                self.executor.place_oco_shield(symbol, tp_price=tp_price, sl_price=sl_price)
+                                self.notifier.send_alert(f"🛡️ *Escudo OCO Activado (Día 2+)*\nSímbolo: {symbol}\nTP: {tp_price} | SL: {sl_price}")
+                    else:
+                        print(f"⏳ {symbol}: Posición en Día 1. Reteniendo Brackets por regla PDT.")
 
                 if not signal:
                     continue
@@ -397,17 +412,16 @@ class NivoStockWatcher:
                     continue  # Bloqueado — se compró hoy mismo
 
                 # ─── EXISTING POSITION GUARD ─────────────────────────────────
-                if signal == "BUY" and self.executor.has_open_position(symbol):
-                    self.logger.info(f"🛡️ Posición ya abierta en {symbol}. Omitiendo nueva compra.")
+                if self.executor.has_open_position(symbol) or self.executor.has_pending_orders(symbol):
+                    if signal == "BUY":
+                        self.logger.info(f"🛡️ Posición ya abierta en {symbol}. Omitiendo nueva compra.")
                     continue
 
-                # Calcular Bracket (2% SL, 5% TP)
-                if signal == "BUY":
-                    sl_price = round(current_price * 0.98, 2)
-                    tp_price = round(current_price * 1.05, 2)
-                else:
-                    sl_price = round(current_price * 1.02, 2)
-                    tp_price = round(current_price * 0.95, 2)
+                # ─── PDT HYBRID SHIELD ─────────────────────────────────────
+                # Envíamos la orden "Nuda" (sin bracket) el Día 1 para evitar 
+                # cierres del broker que violen la regla PDT.
+                sl_price = None
+                tp_price = None
 
                 is_high_conviction = sector_conviction or symbol == "ASML"
                 notional = self._get_notional_per_trade()
@@ -417,7 +431,7 @@ class NivoStockWatcher:
                     msg = f"{icon} *Nivo Sentinel:* Señal {signal} en {symbol}\nMotivo: {signal_reason}"
                     if is_high_conviction:
                         msg = f"🏛️ *SECTOR CONVICTION ALERT*\n{msg}"
-                    msg += f"\n🛡️ *Safety:* SL: {sl_price} | TP: {tp_price}"
+                    msg += f"\n🛡️ *Safety:* Escudo OCO se activará mañana (Día 2)"
                     msg += f"\n💰 *Notional:* ${notional}"
 
                     if self.autonomous_mode:
@@ -510,19 +524,15 @@ class NivoStockWatcher:
                     continue  # Bloqueado por PDT
 
                 # ─── EXISTING POSITION GUARD ─────────────────────────────────
-                if expected_signal == "BUY" and self.executor.has_open_position(symbol):
-                    self.logger.info(f"[Queue] 🛡️ Posición ya abierta en {symbol}. Omitiendo nueva compra.")
+                if self.executor.has_open_position(symbol) or self.executor.has_pending_orders(symbol):
+                    if expected_signal == "BUY":
+                        self.logger.info(f"[Queue] 🛡️ Posición ya abierta en {symbol}. Omitiendo nueva compra.")
                     continue
 
-                # Recalcular SL/TP al precio de apertura real (10:00 AM)
-                if expected_signal == "BUY":
-                    sl_price = round(current_price * 0.98, 2)
-                    tp_price = round(current_price * 1.05, 2)
-                    side = OrderSide.BUY
-                else:
-                    sl_price = round(current_price * 1.02, 2)
-                    tp_price = round(current_price * 0.95, 2)
-                    side = OrderSide.SELL
+                # ─── PDT HYBRID SHIELD ─────────────────────────────────────
+                sl_price = None
+                tp_price = None
+                side = OrderSide.BUY if expected_signal == "BUY" else OrderSide.SELL
 
                 notional = item.get("notional", self._capital_per_trade)
                 result = self.executor.place_safe_order(
