@@ -2,9 +2,9 @@
 Description=Nivo FX Sentinel Timer - Runs every 1 minute during trading hours
 
 [Timer]
-# Corre cada 1 minuto
+# Corre cada 15 minutos (Alineado con estrategia H1)
 OnBootSec=2min
-OnUnitActiveSec=1min
+OnUnitActiveSec=15min
 
 [Install]
 WantedBy=timers.target

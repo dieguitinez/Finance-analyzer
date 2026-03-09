@@ -68,11 +68,11 @@ rm -f $ArchiveName
 # Fix Windows line endings in shell scripts
 find $RemotePath -name "*.sh" -exec sed -i 's/\r$//' {} +
 echo '---- Restarting Services ----'
-sudo systemctl restart nivo-dashboard.service
-sudo systemctl restart nivo-sentinel.service
-sudo systemctl restart stock-watcher.service
-sudo systemctl restart stock-bot-tg.service
-sudo systemctl restart nivo-bot.service
+echo "198824" | sudo -S systemctl restart nivo-dashboard.service
+echo "198824" | sudo -S systemctl restart nivo-sentinel.service
+echo "198824" | sudo -S systemctl restart stock-watcher.service
+echo "198824" | sudo -S systemctl restart stock-bot-tg.service
+echo "198824" | sudo -S systemctl restart nivo-bot.service
 echo '---- Deployment Unpacked and Services Restarted Successfully ----'
 "@
 
