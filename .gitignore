@@ -28,6 +28,7 @@ wheels/
 
 # Environment variables
 .env
+.env.*
 
 # Streamlit
 .streamlit/
@@ -40,6 +41,10 @@ Thumbs.db
 *.tar.gz
 notebooklmcontext/
 "archivos contexto para agente/"
+
+# Backups and Context Documentation
+backup_*/
+*.md
 
 # Nivo FX Cleanup (Local/System stuff)
 .agent/
