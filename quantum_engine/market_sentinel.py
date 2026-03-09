@@ -53,7 +53,7 @@ def extract_highs_lows(json_data):
         logger.error(f"Error parsing JSON: {e}")
         return [], []
 
-def check_volatility_expansion(pair="EUR_USD", tf="H1", threshold_bps=40.0):
+def check_volatility_expansion(pair="EUR_USD", tf="H1", threshold_bps=75.0):
     """
     Minimalist Volatility Check.
     If the recent price swing exceeds the threshold in basis points, trigger an event.

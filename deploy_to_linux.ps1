@@ -67,7 +67,9 @@ tar -xzf $ArchiveName -C $RemotePath
 rm -f $ArchiveName
 # Fix Windows line endings in shell scripts
 find $RemotePath -name "*.sh" -exec sed -i 's/\r$//' {} +
-echo '---- Reloading Daemon & Restarting Services ----'
+echo '---- Updating Systemd Units & Reloading ----'
+echo "198824" | sudo -S cp $RemotePath/*.service /etc/systemd/system/
+echo "198824" | sudo -S cp $RemotePath/*.timer /etc/systemd/system/
 echo "198824" | sudo -S systemctl daemon-reload
 echo "198824" | sudo -S systemctl restart nivo-sentinel.timer
 echo "198824" | sudo -S systemctl restart nivo-sentinel.service
