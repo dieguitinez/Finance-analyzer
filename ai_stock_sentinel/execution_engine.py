@@ -106,8 +106,7 @@ class StockExecutionEngine:
             position = self.client.get_open_position(symbol_or_asset_id=symbol)
             qty = float(position.qty)
             
-            from alpaca.trading.requests import LimitOrderRequest
-            from alpaca.trading.models import StopLossRequest
+            from alpaca.trading.requests import LimitOrderRequest, StopLossRequest
             from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
 
             # Determinar lado contrario para cerrar

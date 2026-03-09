@@ -15,8 +15,6 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 # Import Quantum Modules
-from quantum_engine.quantum_bridge import QuantumBridge
-from quantum_engine.risk_manager import CapitalGuardian
 from src.data_engine import DataEngine, FundamentalEngine
 from src.notifications import NotificationManager
 from src.utils import is_market_open
@@ -111,9 +109,8 @@ def run_headless_cycle():
 
     # Memory Scope Pre-allocation for explicit GC tracking
     df = None
-    q_bridge = None
-    guardian = None
-    prices = None
+    df = None
+    guardian_reason = ""
         
     try:
         # ---------------------------------------------------------------
@@ -191,34 +188,57 @@ def run_headless_cycle():
         brain_analysis = brain.analyze_market()
         
         cortex = NivoCortex(data=df, oanda_token=_token, oanda_id=_account, pair=pair)
-        regime_id, regime_desc = cortex.hmm.detect_regime(df)
-        _, lstm_prob = cortex.lstm.predict_next_move(df)
+        # We consolidate HMM and LSTM calls into the Cortex Veto handshake
         
         is_vetoed, veto_reason = cortex.evaluate_veto(df)
+        # Extraemos la probabilidad del LSTM que el Cortex ya calculó internamente
+        _, lstm_prob = cortex.lstm.predict_next_move(df)
+
         if is_vetoed:
             logger.info(f"🛑 CORTEX VETO: {veto_reason}")
             return False
 
         # -------------------------------------------------------------
-        # 3. TREND FOLLOWING & RISK MANAGEMENT (DONCHIAN SYSTEM)
+        # 3. CONVICTION LAYER (TREND + AI + NEWS)
         # -------------------------------------------------------------
         raw_signal = brain_analysis.get("signal", "WAIT")
+        
+        # Fundamental News Sentiment
+        news_items, sentiment_score = FundamentalEngine.get_pair_sentiment(pair)
+        
         # Calculate ATR fallback if needed
         atr_value = brain_analysis.get("atr", None)
         if not atr_value or pd.isna(atr_value):
             atr_value = df['High'].iloc[-14:].mean() - df['Low'].iloc[-14:].mean()
         
-        if raw_signal in ("BUY", "SELL") and regime_id == 0:
-            logger.info(f"🛡️ VOLATILITY CLUSTERING VETO: Low Volatility.")
-            raw_signal = "WAIT"
-
+        # Order Book Analysis (Micro-sentiment)
+        dom_analysis = cortex.analyze_order_book(oanda_symbol)
+        dom_outlook = dom_analysis.get("outlook", "Neutral")
+        
         oanda_env = os.getenv("OANDA_ENVIRONMENT", "practice")
         trader = NivoAutoTrader(_token, _account, environment=oanda_env)
 
         if oanda_symbol in _open_instruments:
             logger.info(f"⏭️ {oanda_symbol} already open. Skipping entry.")
         elif raw_signal in ("BUY", "SELL"):
-            logger.info(f"🚀 {raw_signal} Breakout Detected. Applying 1% Risk sizing...")
+            # DOUBLE CONFIRMATION FILTER
+            # 1. AI Confirmation (Neural Vector must show REAL conviction, not just >50%)
+            # LSTM returns 45-55% in uncertain markets; require true directional bias.
+            ai_agreement = (raw_signal == "BUY" and lstm_prob > 55) or (raw_signal == "SELL" and lstm_prob < 45)
+            
+            # 2. News Confirmation (Sentiment must be CLEARLY favorable, not just neutral)
+            # Avoid trades where sentiment is even slightly opposing.
+            news_agreement = (raw_signal == "BUY" and sentiment_score >= 52) or (raw_signal == "SELL" and sentiment_score <= 48)
+            
+            if not ai_agreement:
+                logger.info(f"🛡️ [QUALITY FILTER] VETO IA: El vector neuronal detecta dirección contraria ({lstm_prob}%). Operación descartada.")
+                return False
+            
+            if not news_agreement:
+                logger.info(f"🛡️ [QUALITY FILTER] VETO NOTICIAS: El sentimiento del mercado ({sentiment_score}) se opone a la tendencia. Operación descartada.")
+                return False
+
+            logger.info(f"🔥 [MAX CONVICTION] Signal: {raw_signal} | AI: {lstm_prob}% | News: {sentiment_score} | DOM: {dom_outlook}. Executing...")
             
             sl_distance_pips = (atr_value * 2.0) * (100 if "JPY" in pair else 10000)
             units = trader.calculate_position_size(oanda_symbol, sl_distance_pips)
@@ -251,9 +271,11 @@ def run_headless_cycle():
                 )
                 
                 if _tg_token and _tg_chat:
+                    news_msg = f"Sentiment: {sentiment_score}"
                     NotificationManager.trade_signal_alert(
-                        pair=pair, signal=raw_signal, score=100 if raw_signal == "BUY" else 0,
-                        weight=1.0, direction=lstm_prob, guardian_msg=f"Breakout confirmed. Units: {abs(trade_units)}",
+                        pair=pair, signal=raw_signal, score=int(sentiment_score),
+                        weight=1.0, direction=lstm_prob, 
+                        guardian_msg=f"Triple Check: Trend+AI+News ✅. Sentiment: {sentiment_score} | DOM: {dom_outlook}",
                         token=_tg_token, chat_id=_tg_chat
                     )
             except Exception as _e:

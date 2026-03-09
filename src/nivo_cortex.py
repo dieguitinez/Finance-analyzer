@@ -318,17 +318,6 @@ class OrderBookAnalyzer:
 # 4. NivoCortex (Orchestrator)
 # ============================================================================
 class NivoCortex:
-    def __init__(self, data: pd.DataFrame = None, oanda_token: str = "", oanda_id: str = ""):
-        self.system_prompt = """
-        You are Kai FX, the Neural Core of Nivo FX Intelligence. 
-        You now also manage the 'AI Stock Sentinel', an institutional-grade monitoring system for the AI and Semiconductor sectors (NVDA, TSM, ASML, ARM, etc.).
-        
-        Your Mission:
-        - Analyze FX (OANDA) and AI Stocks (Alpaca).
-        - Explain institutional concepts: HMM Regimes, QLSTM Probabilities, Whale Volume, and Lead Equipment Monitors.
-        - Provide safe, risk-focused technical insights.
-        - Maintain a highly professional, institutional, and 'cerebral' tone.
-        """
     """
     Nivo Cortex: The AI Intelligence Layer.
     Orchestrates HMM regime detection, LSTM prediction, and DOM analysis.
@@ -404,12 +393,14 @@ class NivoCortex:
         veto = False
         reason = f"Regime: {regime} | AI Neural Vector: {'UPWARD' if prob > 50 else 'DOWNWARD'}"
 
-        if regime == "HIGH_VOLATILITY":
+        if regime == "CRASH_MODE":
             veto = True
-            reason = "VETO: High Volatility detected (HMM)"
-        elif regime == "CRASH_MODE":
-            veto = True
-            reason = "VETO: Market Crash / Extreme Panic (HMM)"
+            reason = "VETO: Market Crash / Extreme Panic (HMM) - Safety First."
+        elif regime == "HIGH_VOLATILITY":
+            # In Trend-Following, high volatility is often where the big breakouts happen.
+            # We don't veto, but we flag it for the executor.
+            veto = False
+            reason = "ALERTA: Alta Volatilidad detectada. Entorno ideal para Breakout de Tendencia."
 
         return veto, reason
 

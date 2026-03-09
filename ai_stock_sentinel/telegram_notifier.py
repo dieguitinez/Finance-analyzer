@@ -37,19 +37,64 @@ class StockTelegramNotifier:
         formatted_msg = f"{message}\n\n📊 <a href='{dashboard_url}'>Ver en Alpaca Dashboard</a>"
         self.send_raw_message(formatted_msg)
 
-    def notify_market_scan(self, symbol, price, change=None):
-        """Notifica un movimiento interesante"""
-        emoji = "📈" if (change and change > 0) else "📉"
+    # ─── TRADE NOTIFICATIONS (the only automated messages sent) ───────────────
+
+    def send_trade_open(self, symbol: str, side: str, price: float, notional: float, reason: str):
+        """
+        Notificación de ENTRADA en una operación.
+        Solo se envía cuando el bot ejecuta una orden en Alpaca.
+        """
+        icon = "🚀" if side == "BUY" else "🔻"
+        side_label = "COMPRA" if side == "BUY" else "VENTA"
+        dashboard_url = "https://app.alpaca.markets/paper/dashboard"
         msg = (
-            f"*Nivo Stock Alert* {emoji}\n\n"
-            f"🔹 *Activo:* {symbol}\n"
-            f"💵 *Precio:* ${price:.2f}\n"
+            f"{icon} <b>OPERACIÓN ABIERTA — {symbol}</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 <b>Acción:</b> {side_label}\n"
+            f"💵 <b>Precio entrada:</b> ${price:.2f}\n"
+            f"💰 <b>Capital invertido:</b> ${notional:.2f}\n"
+            f"🧠 <b>Motivo:</b> <i>{reason}</i>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 <a href='{dashboard_url}'>Ver en Alpaca</a>"
         )
-        if change:
-            msg += f"📊 *Cambio:* {change:+.2f}%\n"
-            
-        msg += f"\n_Monitoreo Institucional Nivo Partners_"
-        self.send_alert(msg)
+        self.send_raw_message(msg)
+
+    def send_trade_close(self, symbol: str, side: str, entry_price: float,
+                         exit_price: float, qty: float, pnl_usd: float):
+        """
+        Notificación de SALIDA de una operación con P&L.
+        Se envía cuando el bot detecta que una posición fue cerrada
+        (por OCO, Stop Loss, Take Profit, o Panic).
+        """
+        pnl_pct = ((exit_price - entry_price) / entry_price) * 100 if entry_price else 0
+        if side == "SELL":  # Short position: profit when price goes down
+            pnl_pct = -pnl_pct
+
+        is_profit = pnl_usd >= 0
+        icon = "✅" if is_profit else "❌"
+        result_label = "GANANCIA" if is_profit else "PÉRDIDA"
+        dashboard_url = "https://app.alpaca.markets/paper/dashboard"
+
+        msg = (
+            f"{icon} <b>POSICIÓN CERRADA — {symbol}</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 <b>Acciones:</b> {abs(qty):.4f}\n"
+            f"📥 <b>Entrada:</b> ${entry_price:.2f}\n"
+            f"📤 <b>Salida:</b> ${exit_price:.2f}\n"
+            f"{'📈' if is_profit else '📉'} <b>{result_label}:</b> "
+            f"${pnl_usd:+.2f} ({pnl_pct:+.2f}%)\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 <a href='{dashboard_url}'>Ver en Alpaca</a>"
+        )
+        self.send_raw_message(msg)
+
+    def send_critical_alert(self, message: str):
+        """
+        Alerta de sistema crítica (sector bajista, kill switch, error grave).
+        Usa el mismo canal pero sin link de dashboard para mayor urgencia.
+        """
+        self.send_raw_message(f"🚨 <b>ALERTA SISTEMA</b>\n\n{message}")
+
 
 if __name__ == "__main__":
     # Test rápido de envío

@@ -86,6 +86,11 @@ class NivoStockWatcher:
         # PDT tracker — persiste fechas de compra entre reinicios del bot
         self._pdt_tracker = self._load_pdt_tracker()
 
+        # Position cache — to detect broker-side closes (OCO/SL/TP hit)
+        # Format: {"NVDA": {"qty": 0.15, "avg_entry": 130.50}}
+        self._positions_cache_file = "/tmp/nivo_stock_positions_cache.json"
+        self._positions_cache = self._load_positions_cache()
+
         self.logger.info(f"🚀 Nivo AI Stock Sentinel iniciado. Modo paper: {self.is_paper}")
         self.logger.info(f"📡 Monitoreando {len(self.watchlist)} activos: {self.watchlist}")
         self.logger.info(f"🤖 Autónomo: {'SÍ' if self.autonomous_mode else 'NO (Solo Alertas)'}")
@@ -241,9 +246,10 @@ class NivoStockWatcher:
                     f"[SECTOR GUARD] 🔴 SOXX cayó {daily_change_pct:.2f}% hoy. "
                     f"Umbral: {_SECTOR_BEAR_THRESHOLD}%. Modo Cash activado."
                 )
-                self.notifier.send_raw_message(
-                    f"🔴 <b>ALERTA SECTOR:</b> SOXX cayó {daily_change_pct:.2f}% hoy.\n"
-                    f"El Sentinel ha activado <b>Modo Cash</b>. No se abrirán posiciones."
+                # Critical system alert — this one IS sent to Telegram
+                self.notifier.send_critical_alert(
+                    f"SOXX cayó {daily_change_pct:.2f}% hoy.\n"
+                    f"<b>Modo Cash activado.</b> No se abrirán posiciones nuevas."
                 )
                 return False
 
@@ -253,6 +259,84 @@ class NivoStockWatcher:
         except Exception as e:
             self.logger.warning(f"[SECTOR] Error verificando SOXX: {e}. Asumiendo OK.")
             return True
+
+    # ─── POSITION CACHE (for broker-side close detection) ────────────────────
+
+    def _load_positions_cache(self) -> dict:
+        """Load position snapshot from disk."""
+        try:
+            if os.path.exists(self._positions_cache_file):
+                with open(self._positions_cache_file, 'r') as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+    def _save_positions_cache(self, snapshot: dict):
+        """Persist current position snapshot to disk."""
+        try:
+            with open(self._positions_cache_file, 'w') as f:
+                json.dump(snapshot, f)
+        except Exception as e:
+            self.logger.error(f"[PosCache] Error guardando cache: {e}")
+
+    def _build_positions_snapshot(self) -> dict:
+        """
+        Queries Alpaca for all open positions and returns a dict:
+        { SYMBOL: {"qty": float, "avg_entry": float, "current_price": float, "pnl_usd": float} }
+        """
+        try:
+            positions = self.trading_client.get_all_positions()
+            snapshot = {}
+            for pos in positions:
+                snapshot[pos.symbol] = {
+                    "qty": float(pos.qty),
+                    "avg_entry": float(pos.avg_entry_price),
+                    "current_price": float(pos.current_price),
+                    "pnl_usd": float(pos.unrealized_pl)
+                }
+            return snapshot
+        except Exception as e:
+            self.logger.warning(f"[PosCache] Error consultando posiciones: {e}")
+            return {}
+
+    def _detect_and_report_closures(self):
+        """
+        Compares current open positions against the previous cycle's cache.
+        If a position that was open is now gone → it was closed by the broker
+        (OCO Take Profit, Stop Loss, or Trailing Stop hit).
+        Sends a Telegram P&L notification for each closed position.
+        """
+        current_snapshot = self._build_positions_snapshot()
+        prev_cache = self._positions_cache
+
+        # Find positions that existed before but are now gone
+        closed_symbols = set(prev_cache.keys()) - set(current_snapshot.keys())
+
+        for symbol in closed_symbols:
+            prev = prev_cache[symbol]
+            avg_entry = prev.get("avg_entry", 0.0)
+            qty = prev.get("qty", 0.0)
+            last_price = prev.get("current_price", avg_entry)  # last known price
+            pnl_usd = prev.get("pnl_usd", 0.0)
+            side = "BUY" if qty > 0 else "SELL"
+
+            self.logger.info(
+                f"[PosCache] 📤 Posición cerrada detectada: {symbol} | "
+                f"Entrada: {avg_entry} | Última: {last_price} | PnL: ${pnl_usd:+.2f}"
+            )
+            self.notifier.send_trade_close(
+                symbol=symbol,
+                side=side,
+                entry_price=avg_entry,
+                exit_price=last_price,
+                qty=qty,
+                pnl_usd=pnl_usd
+            )
+
+        # Update cache with the current snapshot
+        self._positions_cache = current_snapshot
+        self._save_positions_cache(current_snapshot)
 
     # ─── ORDER QUEUE ──────────────────────────────────────────────────────────
 
@@ -344,8 +428,12 @@ class NivoStockWatcher:
         """Escanea 24/7 con todos los filtros de seguridad activados."""
         is_active, session_type, reason = self.is_market_open()
         if not is_active:
-            print(f"🌖 {reason}. Sentinel en reposo.")
+            self.logger.debug(f"🌖 {reason}. Sentinel en reposo.")
             return
+
+        # ─── DETECT BROKER-SIDE CLOSURES (OCO/SL/TP hit) ─────────────────────
+        # Must run each cycle to catch automatic closes by Alpaca
+        self._detect_and_report_closures()
 
         if session_type == "TRIGGER":
             self.execute_queue()
@@ -393,7 +481,8 @@ class NivoStockWatcher:
                             tp_price = round(current_price * 1.05, 2)
                             if self.autonomous_mode:
                                 self.executor.place_oco_shield(symbol, tp_price=tp_price, sl_price=sl_price)
-                                self.notifier.send_alert(f"🛡️ *Escudo OCO Activado (Día 2+)*\nSímbolo: {symbol}\nTP: {tp_price} | SL: {sl_price}")
+                                # OCO shield is automatic maintenance — no Telegram needed
+                                self.logger.info(f"[OCO] Escudo Día 2 activado: {symbol} | TP:{tp_price} | SL:{sl_price}")
                     else:
                         print(f"⏳ {symbol}: Posición en Día 1. Reteniendo Brackets por regla PDT.")
 
@@ -427,27 +516,38 @@ class NivoStockWatcher:
                 notional = self._get_notional_per_trade()
 
                 if session_type == "LIVE":
-                    icon = "🚀" if signal == "BUY" else "🔻"
-                    msg = f"{icon} *Nivo Sentinel:* Señal {signal} en {symbol}\nMotivo: {signal_reason}"
-                    if is_high_conviction:
-                        msg = f"🏛️ *SECTOR CONVICTION ALERT*\n{msg}"
-                    msg += f"\n🛡️ *Safety:* Escudo OCO se activará mañana (Día 2)"
-                    msg += f"\n💰 *Notional:* ${notional}"
-
                     if self.autonomous_mode:
-                        self.notifier.send_alert(f"{msg}\n✅ *Ejecutando orden fraccionada...*")
                         result = self.executor.place_safe_order(
                             symbol, qty=None, notional=notional,
                             side=side, tp_price=tp_price, sl_price=sl_price
                         )
-                        # Registrar compra para protección PDT
-                        if signal == "BUY" and result:
-                            self.record_purchase(symbol)
+                        if result:
+                            # ✅ ENTRY NOTIFICATION — the main Telegram alert
+                            self.notifier.send_trade_open(
+                                symbol=symbol,
+                                side=signal,
+                                price=current_price,
+                                notional=notional,
+                                reason=(
+                                    f"{'🏛️ SECTOR CONVICTION — ' if is_high_conviction else ''}"
+                                    f"{signal_reason}"
+                                )
+                            )
+                            # Register purchase for PDT protection
+                            if signal == "BUY":
+                                self.record_purchase(symbol)
                     else:
-                        self.notifier.send_alert(f"{msg}\n⚠️ *Esperando validación (Modo Manual).*")
+                        # Manual mode: notify user that action is needed
+                        self.notifier.send_trade_open(
+                            symbol=symbol,
+                            side=signal,
+                            price=current_price,
+                            notional=notional,
+                            reason=f"⚠️ MODO MANUAL — Confirmar en Alpaca. {signal_reason}"
+                        )
                 else:
-                    # Modo nocturno: encolar
-                    print(f"⏳ SEÑAL NOCTURNA: Encolando {signal} para {symbol}")
+                    # Nocturno: encolar en silencio (solo log)
+                    self.logger.info(f"[Queue] Señal nocturna encolada: {signal} {symbol}")
                     self.order_queue.append({
                         "symbol": symbol,
                         "side": side.value,
@@ -457,10 +557,6 @@ class NivoStockWatcher:
                         "has_earnings_risk": symbol in earnings_risk_set
                     })
                     self._save_queue()
-                    self.notifier.send_raw_message(
-                        f"🌑 <b>Análisis Nocturno:</b> Señal <b>{signal}</b> en <b>{symbol}</b>. "
-                        f"Encolada para apertura (10:00 AM)."
-                    )
 
             except Exception as e:
                 print(f"❌ Error analizando {symbol}: {e}")
@@ -475,18 +571,13 @@ class NivoStockWatcher:
 
         # ─── SECTOR HEALTH CHECK antes de ejecutar toda la cola ──────────────
         if not self.is_sector_healthy():
-            self.notifier.send_raw_message(
-                "🔴 <b>Cola de apertura BLOQUEADA:</b> SOXX detecta mercado bajista. "
-                "Esperando condiciones favorables."
-            )
+            # send_critical_alert already sent by is_sector_healthy()/is_sector_healthy()
+            self.logger.warning("[Queue] Cola bloqueada por SOXX bear market.")
             return
 
         from alpaca.trading.enums import OrderSide
         total = len(self.order_queue)
-        print(f"🔥 10:00 AM! Re-validando {total} órdenes nocturnas...")
-        self.notifier.send_raw_message(
-            f"🔥 <b>10:00 AM — Post-Shakeout!</b> Re-validando {total} órdenes nocturnas..."
-        )
+        self.logger.info(f"🔥 10:00 AM! Re-validando {total} órdenes nocturnas...")
 
         # Refrescar la lista de earnings al momento de ejecutar
         earnings_risk_set = self._get_earnings_today_and_tomorrow()
@@ -498,10 +589,7 @@ class NivoStockWatcher:
                 # ─── EARNINGS RE-CHECK al ejecutar ──────────────────────────
                 if item.get("side") == "buy" and symbol in earnings_risk_set:
                     self.logger.warning(f"[EARNINGS] {symbol}: reporte detectado. Orden nocturna cancelada.")
-                    self.notifier.send_raw_message(
-                        f"⚠️ <b>{symbol}:</b> Tiene reporte de earnings. Orden cancelada por seguridad."
-                    )
-                    continue
+                    continue  # Silently skip — no need to spam Telegram
 
                 # Re-validate: is the signal still valid at 10:00 AM?
                 df = self.get_historical_data(symbol)
@@ -512,12 +600,8 @@ class NivoStockWatcher:
                 expected_signal = "BUY" if original_side_str == "buy" else "SELL"
 
                 if signal != expected_signal:
-                    self.notifier.send_raw_message(
-                        f"⚠️ <b>{symbol}:</b> Señal nocturna caducó "
-                        f"({expected_signal} → {signal or 'WAIT'}). Orden cancelada."
-                    )
-                    self.logger.warning(f"[Queue] {symbol}: señal obsoleta, omitida.")
-                    continue
+                    self.logger.warning(f"[Queue] {symbol}: señal obsoleta, omitida ({expected_signal} → {signal or 'WAIT'}).")
+                    continue  # Silent skip — stale signals are not user-relevant
 
                 # ─── PDT CHECK para ventas en cola ──────────────────────────
                 if original_side_str == "sell" and not self.is_pdt_safe_to_sell(symbol):
@@ -540,9 +624,19 @@ class NivoStockWatcher:
                     side=side, tp_price=tp_price, sl_price=sl_price
                 )
 
-                # Registrar compra para PDT
-                if expected_signal == "BUY" and result:
-                    self.record_purchase(symbol)
+                if result:
+                    # ✅ ENTRY NOTIFICATION for queue execution at 10 AM
+                    current_price_f = float(df['close'].iloc[-1]) if df is not None and not df.empty else 0.0
+                    self.notifier.send_trade_open(
+                        symbol=symbol,
+                        side=expected_signal,
+                        price=current_price_f,
+                        notional=notional,
+                        reason=f"Ejecución 10:00 AM — señal nocturna confirmada. {signal_reason}"
+                    )
+                    # Registrar compra para PDT
+                    if expected_signal == "BUY":
+                        self.record_purchase(symbol)
 
                 executed += 1
                 time.sleep(1)
@@ -551,9 +645,8 @@ class NivoStockWatcher:
 
         self.order_queue = []
         self._save_queue()
-        self.notifier.send_raw_message(
-            f"✅ Apertura 10:00 AM ejecutada: {executed}/{total} órdenes confirmadas."
-        )
+        # Log summary to file only — no Telegram noise
+        self.logger.info(f"[Queue] 10:00 AM ejecutada: {executed}/{total} órdenes confirmadas.")
 
     def run(self):
         """Bucle principal de vigilancia"""

@@ -89,10 +89,14 @@ class DataEngine:
             response = ctx.instrument.candles(oanda_symbol, granularity=granularity, count=500)
             
             if response.status != 200:
-                print(f"OANDA API Error: {response.body.get('errorMessage')}")
+                err_msg = getattr(response, 'body', {}).get('errorMessage', 'Unknown OANDA Error') if response.body else 'No response body'
+                print(f"OANDA API Error {response.status}: {err_msg}")
                 return self._fetch_yahoo(pair, interval, period)
 
-            candles = response.get("candles", 200)
+            candles = getattr(response, "candles", [])
+            if not candles:
+                # v20 response objects keep data in 'body' sometimes or as direct attributes
+                candles = response.get("candles", [])
             data_list = []
             for candle in candles:
                 if not candle.complete: continue
