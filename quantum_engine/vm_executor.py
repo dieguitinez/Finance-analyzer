@@ -22,6 +22,20 @@ from src.auto_execution import NivoAutoTrader
 from src.nivo_trade_brain import NivoTradeBrain
 from src.nivo_cortex import NivoCortex  # Right Hemisphere: HMM + LSTM + DOM Veto
 
+# ============================================================
+# HYBRID SYSTEM EXECUTOR v3.0
+# ----------------------------
+# This executor uses the HYBRID NivoTradeBrain which enforces
+# TWO sequential gates before emitting a BUY/SELL signal:
+#
+#  Gate 1 (trigger):   Donchian 50 breakout (from backup_donchian_stable)
+#  Gate 2 (validator): Legacy weighted score >75% conviction
+#                      (MACD + RSI + ADX + EMA200, from backup_legacy_strategy)
+#
+# Only if BOTH gates pass does vm_executor receive a real signal.
+# The AI (LSTM/News) below acts as a final safety net on top.
+# ============================================================
+
 # Configure Headless Logging
 logging.basicConfig(
     level=logging.INFO,
@@ -231,24 +245,28 @@ def run_headless_cycle():
         if oanda_symbol in _open_instruments:
             logger.info(f"⏭️ {oanda_symbol} already open. Skipping entry.")
         elif raw_signal in ("BUY", "SELL"):
-            # DOUBLE CONFIRMATION FILTER
-            # 1. AI Confirmation (Neural Vector must show REAL conviction, not just >50%)
-            # LSTM returns 45-55% in uncertain markets; require true directional bias.
+            # ================================================================
+            # HYBRID FINAL SAFETY LAYER
+            # Note: The signal from brain.analyze_market() has ALREADY passed
+            # the Donchian 50 trigger AND the Legacy 75% conviction gate.
+            # This layer adds the final AI + News veto on top of that.
+            # ================================================================
+
+            # 1. AI Confirmation: Neural net must show real directional conviction
             ai_agreement = (raw_signal == "BUY" and lstm_prob >= 55) or (raw_signal == "SELL" and lstm_prob <= 45)
-            
-            # 2. News Confirmation (Sentiment must be CLEARLY favorable, not just neutral)
-            # Avoid trades where sentiment is even slightly opposing.
+
+            # 2. News Confirmation: Macro sentiment must support the direction
             news_agreement = (raw_signal == "BUY" and sentiment_score >= 52) or (raw_signal == "SELL" and sentiment_score <= 48)
-            
+
             if not ai_agreement:
-                logger.info(f"🛡️ [QUALITY FILTER] VETO IA: Convicción LSTM insuficiente ({lstm_prob:.2f}%). Se requiere >55% (BUY) o <45% (SELL). Operación DESCARTADA.")
-                return False
-            
-            if not news_agreement:
-                logger.info(f"🛡️ [QUALITY FILTER] VETO NOTICIAS: Sentimiento global ({sentiment_score}) es mixto o se opone a la tendencia. Se requiere >=52 (BUY) o <=48 (SELL). Operación DESCARTADA.")
+                logger.info(f"🛡️ [HYBRID VETO] IA: LSTM conviction {lstm_prob:.2f}% insufficient. Need >55% (BUY) or <45% (SELL). Trade CANCELLED.")
                 return False
 
-            logger.info(f"🔥 [MAX CONVICTION] Signal: {raw_signal} | AI: {lstm_prob}% | News: {sentiment_score} | DOM: {dom_outlook}. Executing...")
+            if not news_agreement:
+                logger.info(f"🛡️ [HYBRID VETO] NEWS: Sentiment {sentiment_score} is mixed or opposing. Need >=52 (BUY) or <=48 (SELL). Trade CANCELLED.")
+                return False
+
+            logger.info(f"🔥 [HYBRID FULL CONVICTION] Donchian✅ + Legacy✅ + LSTM:{lstm_prob:.1f}%✅ + News:{sentiment_score}✅ + DOM:{dom_outlook}. Executing...")
             
             sl_distance_pips = (atr_value * 2.0) * (100 if "JPY" in pair else 10000)
             units = trader.calculate_position_size(oanda_symbol, sl_distance_pips)
@@ -291,7 +309,7 @@ def run_headless_cycle():
             except Exception as _e:
                 logger.error(f"Execution Error: {_e}")
         else:
-            logger.info(f"💤 [{oanda_symbol}] Cycle complete. No valid Trade Signal triggered (Raw: {raw_signal}, Sentiment: {sentiment_score}).")
+            logger.info(f"💤 [HYBRID] [{oanda_symbol}] Cycle complete. No signal (Brain: {raw_signal} | Reason: Donchian or Legacy gate not cleared).")  
 
     except Exception as e:
         logger.error(f"VM Cycle Error: {str(e)}", exc_info=True)
