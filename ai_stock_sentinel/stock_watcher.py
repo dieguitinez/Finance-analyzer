@@ -31,6 +31,8 @@ except ImportError:
     from ai_stock_sentinel.cerebral_engine import StockCerebralEngine
     from ai_stock_sentinel.execution_engine import StockExecutionEngine
 
+import yfinance as yf
+
 # Cargar configuración aislada
 load_dotenv('ai_stock_sentinel/.env')
 
@@ -45,9 +47,10 @@ _QQQ_SYMBOL          = "QQQ"
 _SECTOR_BEAR_THRESHOLD = -3.0   # Si SOXX baja más de 3% en el día → Cash mode
 _MARKET_BEAR_THRESHOLD = -1.5   # Si QQQ baja más de 1.5% en el día → Cash mode
 
+# Sanctuary Assets (Gold, Utilities) to pivot to when tech collapses
+_SANCTUARY_SYMBOLS = ["GLD", "XLU"]
+
 # ─── EARNINGS CALENDAR API ───────────────────────────────────────────────────
-# API pública de Nasdaq (gratuita, sin key) para earnings próximos
-_EARNINGS_API_URL = "https://api.nasdaq.com/api/calendar/earnings?date={date}"
 _EARNINGS_CACHE_FILE = "/tmp/nivo_earnings_cache.json"
 
 
@@ -181,8 +184,8 @@ class NivoStockWatcher:
 
     def _get_earnings_today_and_tomorrow(self) -> set:
         """
-        Descarga la lista de compañías con reporte de earnings HOY o MAÑANA.
-        Usa caché para no consumir la API en cada ciclo (TTL: 6 horas).
+        Descarga la lista de compañías con reporte de earnings HOY o MAÑANA usando yfinance.
+        Usa caché para optimizar las peticiones (TTL: 6 horas).
         """
         cache_path = _EARNINGS_CACHE_FILE
         now = datetime.now()
@@ -199,27 +202,24 @@ class NivoStockWatcher:
             pass
 
         earnings_symbols = set()
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; NivoBot/1.0)",
-            "Accept": "application/json"
-        }
+        today_date = now.date()
+        tomorrow_date = today_date + timedelta(days=1)
+        
+        symbols_to_check = self.watchlist + _SANCTUARY_SYMBOLS
 
-        for delta_days in [0, 1]:  # Hoy y mañana
-            check_date = (now + timedelta(days=delta_days)).strftime("%Y-%m-%d")
+        for symbol in symbols_to_check:
             try:
-                url = _EARNINGS_API_URL.format(date=check_date)
-                resp = requests.get(url, headers=headers, timeout=8)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    rows = data.get("data", {}).get("rows", [])
-                    for row in rows:
-                        sym = row.get("symbol", "").upper().strip()
-                        if sym:
-                            earnings_symbols.add(sym)
-                else:
-                    self.logger.warning(f"[EARNINGS] API retornó {resp.status_code} para {check_date}")
+                # Optimized yfinance calendar fetch
+                ticker = yf.Ticker(symbol)
+                cal = ticker.calendar
+                if cal and 'Earnings Date' in cal and cal['Earnings Date']:
+                    earnings_dates = cal['Earnings Date']
+                    for ed in earnings_dates:
+                        if ed == today_date or ed == tomorrow_date:
+                            earnings_symbols.add(symbol)
+                            break
             except Exception as e:
-                self.logger.warning(f"[EARNINGS] Error consultando earnings para {check_date}: {e}")
+                self.logger.warning(f"[EARNINGS] Error validando {symbol} via yfinance: {e}")
 
         # Guardar caché
         try:
@@ -232,7 +232,7 @@ class NivoStockWatcher:
             pass
 
         if earnings_symbols:
-            self.logger.info(f"[EARNINGS] 📅 Reportes en las próximas 48h: {earnings_symbols & set(self.watchlist)}")
+            self.logger.info(f"[EARNINGS] 📅 Reportes en las próximas 48h: {earnings_symbols}")
 
         return earnings_symbols
 
@@ -249,7 +249,7 @@ class NivoStockWatcher:
     def is_sector_healthy(self) -> bool:
         """
         Verifica si el mercado general (QQQ) o sector tech (SOXX) están bajistas.
-        Si SOXX cae > 3% o QQQ cae > 1.5% en el día → modo Cash (no entrar).
+        Si SOXX cae > 3% o QQQ cae > 1.5% en el día → retorna False (Activa Rotación de Sector).
         """
         try:
             req = StockLatestQuoteRequest(symbol_or_symbols=[_SOXX_SYMBOL, _QQQ_SYMBOL])
@@ -277,12 +277,8 @@ class NivoStockWatcher:
                     current_price = float(soxx_quote.ask_price or soxx_quote.bid_price)
                     daily_change_pct = ((current_price - prev_close) / prev_close) * 100
                     if daily_change_pct <= _SECTOR_BEAR_THRESHOLD:
-                        self.logger.warning(
-                            f"[SECTOR GUARD] 🔴 SOXX cayó {daily_change_pct:.2f}% hoy. Modo Cash activado."
-                        )
-                        self.notifier.send_critical_alert(
-                            f"SOXX cayó {daily_change_pct:.2f}% hoy.\n<b>Modo Cash activado.</b> No se abrirán posiciones nuevas."
-                        )
+                        self.logger.warning(f"[SECTOR GUARD] 🔴 SOXX cayó {daily_change_pct:.2f}% hoy. Activando ROTACIÓN DE SECTOR.")
+                        self.notifier.send_critical_alert(f"SOXX cayó {daily_change_pct:.2f}% hoy.\n<b>Activando Rotación a ETFs Refugio ({', '.join(_SANCTUARY_SYMBOLS)}).</b>")
                         return False
                     self.logger.info(f"[SECTOR] ✅ SOXX: {daily_change_pct:+.2f}%")
 
@@ -294,12 +290,8 @@ class NivoStockWatcher:
                     current_price = float(qqq_quote.ask_price or qqq_quote.bid_price)
                     daily_change_pct = ((current_price - prev_close) / prev_close) * 100
                     if daily_change_pct <= _MARKET_BEAR_THRESHOLD:
-                        self.logger.warning(
-                            f"[MARKET GUARD] 🔴 QQQ cayó {daily_change_pct:.2f}% hoy. Modo Cash activado."
-                        )
-                        self.notifier.send_critical_alert(
-                            f"QQQ cayó {daily_change_pct:.2f}% hoy.\n<b>Modo Cash activado.</b> No se abrirán posiciones nuevas."
-                        )
+                        self.logger.warning(f"[MARKET GUARD] 🔴 QQQ cayó {daily_change_pct:.2f}% hoy. Activando ROTACIÓN DE SECTOR.")
+                        self.notifier.send_critical_alert(f"QQQ cayó {daily_change_pct:.2f}% hoy.\n<b>Activando Rotación a ETFs Refugio ({', '.join(_SANCTUARY_SYMBOLS)}).</b>")
                         return False
                     self.logger.info(f"[MARKET] ✅ QQQ: {daily_change_pct:+.2f}%")
 
@@ -499,27 +491,34 @@ class NivoStockWatcher:
         self.logger.info(f"🔍 Escaneo ({session_type}): {time.strftime('%H:%M:%S')}")
 
         # ─── SECTOR HEALTH CHECK (solo en horario de mercado) ─────────────────
+        # Determine which list of stocks to trade today based on macro health
+        active_watchlist = self.watchlist
+        is_healthy = True
+        
         if session_type == "LIVE":
             if not self.is_sector_healthy():
-                self.logger.info("🔴 Sector/Mercado bajista. Modo Cash — no se abren posiciones nuevas.")
-                return
+                self.logger.info(f"🔴 Mercado bajista. Rotando a activos refugio: {_SANCTUARY_SYMBOLS}")
+                active_watchlist = _SANCTUARY_SYMBOLS
+                is_healthy = False
 
         # ─── EARNINGS CALENDAR (cache compartido para todos los símbolos) ───
         earnings_risk_set = self._get_earnings_today_and_tomorrow()
 
-        # 1. Analizar primero al Líder (ASML) como Indicador Adelantado
+        # 1. Analizar primero al Líder (ASML) como Indicador Adelantado (solo si mercado tech sano)
         sector_conviction = False
-        try:
-            asml_df = self.get_historical_data("ASML")
-            asml_signal, _ = self.cerebro.analyze_momentum(asml_df, "ASML")
-            if asml_signal:
-                sector_conviction = True
-                self.logger.info("🏛️ ALTA CONVICCIÓN: ASML está liderando el sector hoy.")
-        except Exception as e:
-            self.logger.error(f"⚠️ Error analizando líder ASML: {e}")
+        if is_healthy:
+            try:
+                asml_df = self.get_historical_data("ASML")
+                asml_signal, _ = self.cerebro.analyze_momentum(asml_df, "ASML")
+                # User constraint: ONLY allow LONG positions, NO SHORTS.
+                if asml_signal == "BUY":
+                    sector_conviction = True
+                    self.logger.info("🏛️ ALTA CONVICCIÓN: ASML está liderando el sector tech hoy.")
+            except Exception as e:
+                self.logger.error(f"⚠️ Error analizando líder ASML: {e}")
 
-        # 2. Analizar el resto de la Watchlist
-        for symbol in self.watchlist:
+        # 2. Analizar la lista activa (Tech Watchlist o Sanctuary ETFs)
+        for symbol in active_watchlist:
             try:
                 df = self.get_historical_data(symbol)
                 if df.empty:
@@ -527,7 +526,16 @@ class NivoStockWatcher:
                     continue
                 current_price = float(df['close'].iloc[-1])
                 signal, signal_reason = self.cerebro.analyze_momentum(df, symbol)
-                self.logger.info(f"💎 {symbol}: ${current_price:.2f} | {signal_reason}")
+                
+                # USER OVERRIDE: NO SHORT SELLING (Requires $25,000 PDT/Margin)
+                if signal == "SELL":
+                    # Only allow SELL if we already own it (closing a long position)
+                    if not self.executor.has_open_position(symbol):
+                        signal = None
+                        self.logger.debug(f"🛑 Señal SHORT bloqueada para {symbol} (Regla de cuenta Cash <$25k).")
+                
+                if signal:
+                    self.logger.info(f"💎 {symbol}: ${current_price:.2f} | {signal_reason}")
 
                 # ─── MANTENIMIENTO DE POSICIONES ACTIVAS (ESCUDO OCO DÍA 2) ───
                 if session_type == "LIVE" and self.executor.has_open_position(symbol):
@@ -546,6 +554,9 @@ class NivoStockWatcher:
                 if not signal:
                     continue
 
+                # Ensure side is correct (Since we blocked raw 'SELL' above if we don't own it, 
+                # any 'SELL' here is a position closure which Alpaca handles natively, but if the 
+                # executor expects an OrderSide for new trades, it must be BUY)
                 side = OrderSide.BUY if signal == "BUY" else OrderSide.SELL
 
                 # ─── EARNINGS GUARD ─────────────────────────────────────────
@@ -553,7 +564,7 @@ class NivoStockWatcher:
                     self.logger.warning(f"[EARNINGS GUARD] {symbol} tiene reporte <48h. Entrada BLOQUEADA.")
                     continue
 
-                # ─── PDT GUARD (solo para SELL) ──────────────────────────────
+                # ─── PDT GUARD (solo para SELL de mantemiento manual) ────────
                 if signal == "SELL" and not self.is_pdt_safe_to_sell(symbol):
                     continue  # Bloqueado — se compró hoy mismo
 
@@ -627,10 +638,12 @@ class NivoStockWatcher:
             return
 
         # ─── SECTOR HEALTH CHECK antes de ejecutar toda la cola ──────────────
+        active_watchlist = self.watchlist
         if not self.is_sector_healthy():
-            # send_critical_alert already sent by is_sector_healthy()/is_sector_healthy()
-            self.logger.warning("[Queue] Cola bloqueada por SOXX bear market.")
-            return
+            self.logger.warning(f"[Queue] SOXX bear market. Rotando ejecución a activos refugio: {_SANCTUARY_SYMBOLS}")
+            # Solo permitiremos procesar órdenes nocturnas que pertenezcan a los activos refugio,
+            # (aunque rara vez se encolarán si el refugio saltó de noche, nos protege de comprar tech hoy).
+            active_watchlist = _SANCTUARY_SYMBOLS
 
         from alpaca.trading.enums import OrderSide
         total = len(self.order_queue)
@@ -643,6 +656,11 @@ class NivoStockWatcher:
         for item in self.order_queue:
             symbol = item.get("symbol", "?")
             try:
+                # Si el mercado está mal, solo procesar si el símbolo es un activo refugio
+                if symbol not in active_watchlist:
+                    self.logger.warning(f"[Queue] {symbol} no forma parte de la Watchlist Activa Hoy (Rotación de Sector). Omitiendo.")
+                    continue
+
                 # ─── EARNINGS RE-CHECK al ejecutar ──────────────────────────
                 if item.get("side") == "buy" and symbol in earnings_risk_set:
                     self.logger.warning(f"[EARNINGS] {symbol}: reporte detectado. Orden nocturna cancelada.")
@@ -652,6 +670,12 @@ class NivoStockWatcher:
                 df = self.get_historical_data(symbol)
                 current_price = df['close'].iloc[-1]
                 signal, signal_reason = self.cerebro.analyze_momentum(df, symbol)
+
+                # USER OVERRIDE: NO SHORT SELLING
+                if signal == "SELL":
+                    if not self.executor.has_open_position(symbol):
+                        signal = None
+                        self.logger.debug(f"[Queue] 🛑 Señal SHORT de 10AM bloqueada para {symbol}.")
 
                 original_side_str = item["side"]
                 expected_signal = "BUY" if original_side_str == "buy" else "SELL"

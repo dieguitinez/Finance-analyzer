@@ -55,11 +55,18 @@ class StockCerebralEngine:
             if is_bearish and is_massive_whale and is_not_oversold:
                 return "SELL", "🏛️ SECTOR LEADER (BEARISH): ASML rompiendo a la baja con volumen masivo (>2.5x)."
 
-        # 5. Veredicto Final
+        # 5. MEAN REVERSION (Contrarian Buy / Panic Buying)
+        # Institucional: Comprar pánico extremo justificado si la empresa es sólida.
+        deviation_from_ema20 = ((ema_20 - current_price) / ema_20) * 100
+        is_extreme_panic = current_rsi < 25 and deviation_from_ema20 > 3.0 # Más del 3% por debajo de la media móvil
+        if is_extreme_panic and is_whale_present:
+            return "BUY", f"🩸 MEAN REVERSION (CONTRARIAN BUY): Pánico extremo detectado. RSI: {current_rsi:.1f}, Desviación EMA20: -{deviation_from_ema20:.1f}%, Vol: {current_volume/avg_volume:.1f}x."
+
+        # 6. Veredicto Final (Trend Following)
         if is_whale_present:
             if is_bullish and is_not_overbought:
-                return "BUY", f"🐋 WHALE BUY: RSI {current_rsi:.1f}, Vol: {current_volume/avg_volume:.1f}x avg"
+                return "BUY", f"🐋 WHALE BUY: Momentum alcista. RSI {current_rsi:.1f}, Vol: {current_volume/avg_volume:.1f}x avg"
             if is_bearish and is_not_oversold:
-                return "SELL", f"🐋 WHALE SELL: RSI {current_rsi:.1f}, Vol: {current_volume/avg_volume:.1f}x avg"
+                return "SELL", f"🐋 WHALE SELL: Momentum bajista. RSI {current_rsi:.1f}, Vol: {current_volume/avg_volume:.1f}x avg"
         
-        return None, "Vigilancia normal (Sin huella institucional)"
+        return None, "Vigilancia normal (Sin huella institucional ni pánico)"
