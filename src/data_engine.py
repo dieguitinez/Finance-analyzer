@@ -144,6 +144,22 @@ class DataEngine:
         normalized_pair = pair.replace("-", "/").replace("_", "/").upper().strip()
         return mapping.get(normalized_pair, normalized_pair if "=" in normalized_pair else f"{normalized_pair.replace('/', '')}=X")
 
+    def fetch_dxy_data(self, interval="1h", period="20d"):
+        """
+        Fetches the US Dollar Index (DXY) from Yahoo Finance.
+        Used for Macro Institutional Correlation checks.
+        """
+        try:
+            df = yf.download("DX-Y.NYB", interval=interval, period=period, progress=False)
+            if df is not None and not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.droplevel('Ticker')
+                return df
+            return None
+        except Exception as e:
+            print(f"[DataEngine] Error fetching DXY data: {e}")
+            return None
+
 class FundamentalEngine:
     """
     Nivo Fundamental Intelligence Layer.

@@ -393,7 +393,7 @@ class NivoAutoTrader:
             return {"status": "error", "message": str(e)}
 
     def calculate_position_size(self, instrument: str, stop_loss_pips: float):
-        """Calculate units based on 1% risk percentage and stop loss distance."""
+        """Calculate units based on fixed Risk USD (Volatility Parity) and Stop Loss distance."""
         try:
             # 1. Get Account Balance
             response = self.ctx.account.summary(self.account_id)
@@ -404,13 +404,13 @@ class NivoAutoTrader:
             account_summary = response.get("account")
             balance = float(account_summary.balance)
             
-            # 2. Daily Risk Amount (1% of Balance)
-            risk_amount = balance * self.capital_at_risk_per_trade
+            # 2. Volatility Parity: Define Risk Amount
+            # We use $20 USD as the default fixed risk per trade as per the V4 Institutional Plan
+            fixed_risk_env = os.getenv("RISK_PER_TRADE_USD", "20.0")
+            risk_amount = float(fixed_risk_env)
             
             # 3. Pip Multiplier (JPY vs Others)
             # For sizing: Units = Risk_Amount / (SL_Pips * Pip_Value_Per_Unit)
-            # For EURUSD: Units = Risk / (SL_Pips * 0.0001)
-            # For USDJPY: Units = Risk / (SL_Pips * 0.01)
             multiplier = 0.01 if "JPY" in instrument else 0.0001
             
             # 4. Final Sizing
@@ -424,7 +424,7 @@ class NivoAutoTrader:
             margin_cap = int(balance * 20)
             final_units = min(max(units, 1), margin_cap)
             
-            logger.info(f"📊 [RISK MGR] Balance: ${balance:.2f} | Risk: ${risk_amount:.2f} | SL Pips: {stop_loss_pips:.1f} | Sized Units: {final_units}")
+            logger.info(f"📊 [VOLATILITY PARITY] Balance: ${balance:.2f} | Risk: ${risk_amount:.2f} | SL Distance: {stop_loss_pips:.1f} pips | Sized Units: {final_units}")
             return final_units
             
         except Exception as e:

@@ -266,6 +266,38 @@ def run_headless_cycle():
                 logger.info(f"🛡️ [HYBRID VETO] NEWS: Sentiment {sentiment_score} is mixed or opposing. Need >=52 (BUY) or <=48 (SELL). Trade CANCELLED.")
                 return False
 
+            # ================================================================
+            # MACRO CORRELATION LAYER (DXY Filter)
+            # ================================================================
+            if "USD" in pair:
+                dxy_df = engine.fetch_dxy_data()
+                if dxy_df is not None and not dxy_df.empty:
+                    dxy_df['EMA50'] = dxy_df['Close'].ewm(span=50, adjust=False).mean()
+                    dxy_bullish = dxy_df['Close'].iloc[-1] > dxy_df['EMA50'].iloc[-1]
+                    
+                    base_currency, quote_currency = pair.split('/')
+                    usd_veto = False
+                    dxy_reason = ""
+                    
+                    if raw_signal == "BUY":
+                        if quote_currency == "USD" and dxy_bullish: # e.g. Buy EUR/USD requires weak USD
+                            usd_veto = True
+                            dxy_reason = "Buying Base vs USD, but USD is Bullish"
+                        elif base_currency == "USD" and not dxy_bullish: # e.g. Buy USD/JPY requires strong USD
+                            usd_veto = True
+                            dxy_reason = "Buying USD vs Quote, but USD is Bearish"
+                    elif raw_signal == "SELL":
+                        if quote_currency == "USD" and not dxy_bullish: # e.g. Sell EUR/USD requires strong USD
+                            usd_veto = True
+                            dxy_reason = "Selling Base vs USD, but USD is Bearish"
+                        elif base_currency == "USD" and dxy_bullish: # e.g. Sell USD/JPY requires weak USD
+                            usd_veto = True
+                            dxy_reason = "Selling USD vs Quote, but USD is Bullish"
+                            
+                    if usd_veto:
+                        logger.info(f"🛡️ [MACRO VETO] DXY Filter: {dxy_reason}. Trade CANCELLED.")
+                        return False
+
             logger.info(f"🔥 [HYBRID FULL CONVICTION] Donchian✅ + Legacy✅ + LSTM:{lstm_prob:.1f}%✅ + News:{sentiment_score}✅ + DOM:{dom_outlook}. Executing...")
             
             sl_distance_pips = (atr_value * 2.0) * (100 if "JPY" in pair else 10000)
