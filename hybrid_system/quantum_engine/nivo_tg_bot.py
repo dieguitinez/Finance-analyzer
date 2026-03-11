@@ -280,41 +280,27 @@ class NivoTelegramBot:
                     return
 
                 pair_display = d.get("pair", requested_raw.replace("_", "/"))
-                price = d.get("current_price", "N/A")
-                ts = str(d.get("timestamp", ""))[:16]
-                lh = d.get("left_hemisphere", {})
-                rh = d.get("right_hemisphere", {})
-                fd = d.get("fundamental", {})
-                qb = d.get("quantum_bridge", {})
-                decision = d.get("decision", "UNKNOWN")
+                price = d.get("price", "N/A")
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+                
+                brain_signal = d.get("brain_signal", "WAIT")
+                hmm_regime = d.get("hmm_regime", "N/A")
+                lstm_prob = float(d.get("lstm_prob", 50.0))
 
-                dec_icon = "📈" if decision == "BUY" else "📉" if decision == "SELL" else "⏸" if decision == "WAIT" else "🛑"
-                lstm_badge = "✅ Entrenado" if rh.get("lstm_trained") else "⚠️ Aleatorio"
-                lstm_prob = float(rh.get('lstm_bull_prob', 50))
-                lstm_bar  = "🟢" if lstm_prob > 60 else "🔴" if lstm_prob < 40 else "🟡"
-                tech      = float(lh.get('tech_score', 50))
-                tech_bar  = "🟢" if tech > 60 else "🔴" if tech < 40 else "🟡"
-                fscore    = float(qb.get('final_score', 50))
-                fs_bar    = "🟢" if fscore > 60 else "🔴" if fscore < 40 else "🟡"
-                veto_line = f"\n  🛑 <b>VETO:</b> {rh.get('veto_reason')}" if rh.get("cortex_veto") else ""
-
+                dec_icon = "📈" if brain_signal == "BUY" else "📉" if brain_signal == "SELL" else "⏸"
+                lstm_bar  = "🟢" if lstm_prob >= 55 else "🔴" if lstm_prob <= 45 else "🟡"
+                
                 msg = (
-                    f"🔬 <b>DIAGNÓSTICO — {pair_display}</b>\n"
+                    f"🔬 <b>DIAGNÓSTICO V4 — {pair_display}</b>\n"
                     f"🕐 {ts}  |  💲 {price}\n"
                     f"{'═'*22}\n"
-                    f"\n🧠 <b>HEMISFERIO IZQUIERDO (Técnico)</b>\n"
-                    f"  Score: {tech_bar} <b>{lh.get('tech_score')}/100</b>  |  Señal: {lh.get('signal','N/A')}\n"
-                    f"  RSI: {lh.get('rsi','N/A')}  |  MACD: {lh.get('macd_signal','N/A')}\n"
-                    f"\n🤖 <b>HEMISFERIO DERECHO (IA)</b>\n"
-                    f"  HMM Régimen: <b>{rh.get('hmm_regime','N/A')}</b>\n"
-                    f"  LSTM Bull:   {lstm_bar} <b>{lstm_prob}%</b>  [{lstm_badge}]{veto_line}\n"
-                    f"\n📰 <b>FUNDAMENTAL</b>\n"
-                    f"  Sentiment: <b>{fd.get('sentiment_score','N/A')}/100</b>  |  Headlines: {fd.get('headline_count','N/A')}\n"
-                    f"\n⚛️ <b>PUENTE CUÁNTICO</b>\n"
-                    f"  Score Final: {fs_bar} <b>{fscore}/100</b>  |  Q-Mult: {qb.get('q_multiplier','N/A')}x\n"
+                    f"🧠 <b>SEÑAL TÉCNICA (Donchian + Legacy)</b>\n"
+                    f"  Resultado: <b>{brain_signal}</b> {dec_icon}\n\n"
+                    f"🤖 <b>HEMISFERIO INTELIGENCIA ARTIFICIAL</b>\n"
+                    f"  Régimen de Mercado (HMM): <b>{hmm_regime}</b>\n"
+                    f"  Proyección Alcista (LSTM): {lstm_bar} <b>{lstm_prob}%</b>\n"
                     f"{'═'*22}\n"
-                    f"{dec_icon} <b>DECISIÓN: {decision}</b>\n"
-                    f"<i>BUY &gt;60 | SELL &lt;40 | WAIT en el medio</i>"
+                    f"<i>Para ejecutar entrada: LSTM debe coincidir con Señal. (>55% Buy / <45% Sell)</i>"
                 )
                 self.send_message(msg)
 
