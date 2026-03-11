@@ -21,6 +21,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ─── V4 Hybrid Watchlist (Los 9 pares de alta calidad) ───────────────────────
+_V4_WATCHLIST = [
+    "EUR_USD", "USD_JPY", "USD_CAD", "USD_CHF",
+    "NZD_USD", "EUR_JPY", "GBP_JPY", "CHF_JPY", "NZD_JPY"
+]
+
 class NivoTelegramBot:
     def __init__(self):
         load_dotenv()
@@ -73,7 +79,7 @@ class NivoTelegramBot:
                 "🟢 /resume (▶️ RESUME) - Reanudar operación bloqueada\n"
                 "🔹 /help - Mostrar este mensaje\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>Actualizado: 2026-03-05</i>\n"
+                "<i>Actualizado: 2026-03-10 · V4 Hybrid</i>\n"
                 "<i>Nivo Partners Institutional Suite</i>"
             )
             keyboard_markup = {
@@ -188,7 +194,7 @@ class NivoTelegramBot:
             )
             self.send_message(msg)
 
-        elif command in ["/kill", "/panic", "� panic"]:
+        elif command in ["/kill", "/panic", "🛑 panic"]:
             self.send_message("🚨 <b>PROTOCOL: EMERGENCY KILL SWITCH</b>\nIniciando secuencia de detención total...")
             try:
                 # 1. Create Persistent Lock File
@@ -222,14 +228,9 @@ class NivoTelegramBot:
         elif command == "/report":
             requested_raw = args[0].upper().replace("/", "_") if args else ""
             if not requested_raw:
-                _all_pairs = [
-                    "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD",
-                    "USD_CAD", "USD_CHF", "NZD_USD", "EUR_GBP",
-                    "EUR_JPY", "GBP_JPY", "AUD_JPY", "NZD_JPY",
-                    "EUR_AUD", "EUR_CHF", "CHF_JPY"
-                ]
+                # V4: Only show the 9 curated pairs from our watchlist
                 buttons, row = [], []
-                for i, p in enumerate(_all_pairs):
+                for i, p in enumerate(_V4_WATCHLIST):
                     row.append({"text": p.replace("_", "/"), "callback_data": f"report:{p}"})
                     if len(row) == 3:
                         buttons.append(row)
@@ -239,7 +240,7 @@ class NivoTelegramBot:
                 try:
                     requests.post(f"{self.api_url}/sendMessage", json={
                         "chat_id": self.chat_id,
-                        "text": "🔬 <b>¿Qué par deseas diagnosticar?</b>\nToca un par para ver el análisis interno completo:",
+                        "text": "🔬 <b>Diagnóstico V4 — ¿Qué par deseas analizar?</b>\n<i>Los 9 pares del sistema Híbrido:</i>",
                         "parse_mode": "HTML",
                         "reply_markup": {"inline_keyboard": buttons}
                     }, timeout=10)
