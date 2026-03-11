@@ -114,6 +114,8 @@ class StockExecutionEngine:
             abs_qty = abs(qty)
 
             # Orden Limit principal (Take Profit) con Stop Loss adjunto (OCO)
+            from alpaca.trading.requests import TakeProfitRequest
+            
             order_data = LimitOrderRequest(
                 symbol=symbol,
                 qty=abs_qty,
@@ -121,6 +123,7 @@ class StockExecutionEngine:
                 time_in_force=TimeInForce.GTC,
                 limit_price=tp_price,
                 order_class=OrderClass.OCO,
+                take_profit=TakeProfitRequest(limit_price=tp_price),
                 stop_loss=StopLossRequest(stop_price=sl_price)
             )
             order = self.client.submit_order(order_data=order_data)

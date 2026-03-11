@@ -208,10 +208,16 @@ class NivoStockWatcher:
         symbols_to_check = self.watchlist + _SANCTUARY_SYMBOLS
 
         for symbol in symbols_to_check:
+            # ETFs don't have corporate earnings, skip yfinance API calls directly.
+            if symbol in _SANCTUARY_SYMBOLS:
+                continue
+                
             try:
                 # Optimized yfinance calendar fetch
                 ticker = yf.Ticker(symbol)
                 cal = ticker.calendar
+                # YFinance sometimes returns HTTP 404 logs internally if no fundamentals exist.
+                # We catch general exceptions and don't panic.
                 if cal and 'Earnings Date' in cal and cal['Earnings Date']:
                     earnings_dates = cal['Earnings Date']
                     for ed in earnings_dates:
@@ -219,7 +225,9 @@ class NivoStockWatcher:
                             earnings_symbols.add(symbol)
                             break
             except Exception as e:
-                self.logger.warning(f"[EARNINGS] Error validando {symbol} via yfinance: {e}")
+                # Silenciar errores 404 conocidos para activos sin datos fundamentales
+                if "404" not in str(e):
+                    self.logger.warning(f"[EARNINGS] Error validando {symbol} via yfinance: {e}")
 
         # Guardar caché
         try:
