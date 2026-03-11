@@ -130,7 +130,11 @@ class MarketRegimeDetector:
             return -1, f"Unknown (Model Error: {str(e)[:20]})"
 
         # Sort by mean to assign semantic labels
-        means = self.model.means_.flatten()
+        try:
+            means = self.model.means_.flatten()
+        except AttributeError:
+             return -1, "Unknown (Training Incomplete)"
+             
         sorted_indices = np.argsort(means)
 
         # Map raw state to semantic regime
