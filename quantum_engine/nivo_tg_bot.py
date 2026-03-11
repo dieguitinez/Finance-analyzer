@@ -21,6 +21,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ─── V4 Hybrid Watchlist (Los 9 pares de alta calidad) ───────────────────────
+_V4_WATCHLIST = [
+    "EUR_USD", "USD_JPY", "USD_CAD", "USD_CHF",
+    "NZD_USD", "EUR_JPY", "GBP_JPY", "CHF_JPY", "NZD_JPY"
+]
+
 class NivoTelegramBot:
     def __init__(self):
         load_dotenv()
@@ -73,7 +79,7 @@ class NivoTelegramBot:
                 "🟢 /resume (▶️ RESUME) - Reanudar operación bloqueada\n"
                 "🔹 /help - Mostrar este mensaje\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>Actualizado: 2026-03-05</i>\n"
+                "<i>Actualizado: 2026-03-10 · V4 Hybrid</i>\n"
                 "<i>Nivo Partners Institutional Suite</i>"
             )
             keyboard_markup = {
@@ -188,7 +194,7 @@ class NivoTelegramBot:
             )
             self.send_message(msg)
 
-        elif command in ["/kill", "/panic", "� panic"]:
+        elif command in ["/kill", "/panic", "🛑 panic"]:
             self.send_message("🚨 <b>PROTOCOL: EMERGENCY KILL SWITCH</b>\nIniciando secuencia de detención total...")
             try:
                 # 1. Create Persistent Lock File
@@ -222,14 +228,9 @@ class NivoTelegramBot:
         elif command == "/report":
             requested_raw = args[0].upper().replace("/", "_") if args else ""
             if not requested_raw:
-                _all_pairs = [
-                    "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD",
-                    "USD_CAD", "USD_CHF", "NZD_USD", "EUR_GBP",
-                    "EUR_JPY", "GBP_JPY", "AUD_JPY", "NZD_JPY",
-                    "EUR_AUD", "EUR_CHF", "CHF_JPY"
-                ]
+                # V4: Only show the 9 curated pairs from our watchlist
                 buttons, row = [], []
-                for i, p in enumerate(_all_pairs):
+                for i, p in enumerate(_V4_WATCHLIST):
                     row.append({"text": p.replace("_", "/"), "callback_data": f"report:{p}"})
                     if len(row) == 3:
                         buttons.append(row)
@@ -239,7 +240,7 @@ class NivoTelegramBot:
                 try:
                     requests.post(f"{self.api_url}/sendMessage", json={
                         "chat_id": self.chat_id,
-                        "text": "🔬 <b>¿Qué par deseas diagnosticar?</b>\nToca un par para ver el análisis interno completo:",
+                        "text": "🔬 <b>Diagnóstico V4 — ¿Qué par deseas analizar?</b>\n<i>Los 9 pares del sistema Híbrido:</i>",
                         "parse_mode": "HTML",
                         "reply_markup": {"inline_keyboard": buttons}
                     }, timeout=10)
@@ -280,41 +281,27 @@ class NivoTelegramBot:
                     return
 
                 pair_display = d.get("pair", requested_raw.replace("_", "/"))
-                price = d.get("current_price", "N/A")
-                ts = str(d.get("timestamp", ""))[:16]
-                lh = d.get("left_hemisphere", {})
-                rh = d.get("right_hemisphere", {})
-                fd = d.get("fundamental", {})
-                qb = d.get("quantum_bridge", {})
-                decision = d.get("decision", "UNKNOWN")
+                price = d.get("price", "N/A")
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+                
+                brain_signal = d.get("brain_signal", "WAIT")
+                hmm_regime = d.get("hmm_regime", "N/A")
+                lstm_prob = float(d.get("lstm_prob", 50.0))
 
-                dec_icon = "📈" if decision == "BUY" else "📉" if decision == "SELL" else "⏸" if decision == "WAIT" else "🛑"
-                lstm_badge = "✅ Entrenado" if rh.get("lstm_trained") else "⚠️ Aleatorio"
-                lstm_prob = float(rh.get('lstm_bull_prob', 50))
-                lstm_bar  = "🟢" if lstm_prob > 60 else "🔴" if lstm_prob < 40 else "🟡"
-                tech      = float(lh.get('tech_score', 50))
-                tech_bar  = "🟢" if tech > 60 else "🔴" if tech < 40 else "🟡"
-                fscore    = float(qb.get('final_score', 50))
-                fs_bar    = "🟢" if fscore > 60 else "🔴" if fscore < 40 else "🟡"
-                veto_line = f"\n  🛑 <b>VETO:</b> {rh.get('veto_reason')}" if rh.get("cortex_veto") else ""
-
+                dec_icon = "📈" if brain_signal == "BUY" else "📉" if brain_signal == "SELL" else "⏸"
+                lstm_bar  = "🟢" if lstm_prob >= 55 else "🔴" if lstm_prob <= 45 else "🟡"
+                
                 msg = (
-                    f"🔬 <b>DIAGNÓSTICO — {pair_display}</b>\n"
+                    f"🔬 <b>DIAGNÓSTICO V4 — {pair_display}</b>\n"
                     f"🕐 {ts}  |  💲 {price}\n"
                     f"{'═'*22}\n"
-                    f"\n🧠 <b>HEMISFERIO IZQUIERDO (Técnico)</b>\n"
-                    f"  Score: {tech_bar} <b>{lh.get('tech_score')}/100</b>  |  Señal: {lh.get('signal','N/A')}\n"
-                    f"  RSI: {lh.get('rsi','N/A')}  |  MACD: {lh.get('macd_signal','N/A')}\n"
-                    f"\n🤖 <b>HEMISFERIO DERECHO (IA)</b>\n"
-                    f"  HMM Régimen: <b>{rh.get('hmm_regime','N/A')}</b>\n"
-                    f"  LSTM Bull:   {lstm_bar} <b>{lstm_prob}%</b>  [{lstm_badge}]{veto_line}\n"
-                    f"\n📰 <b>FUNDAMENTAL</b>\n"
-                    f"  Sentiment: <b>{fd.get('sentiment_score','N/A')}/100</b>  |  Headlines: {fd.get('headline_count','N/A')}\n"
-                    f"\n⚛️ <b>PUENTE CUÁNTICO</b>\n"
-                    f"  Score Final: {fs_bar} <b>{fscore}/100</b>  |  Q-Mult: {qb.get('q_multiplier','N/A')}x\n"
+                    f"🧠 <b>SEÑAL TÉCNICA (Donchian + Legacy)</b>\n"
+                    f"  Resultado: <b>{brain_signal}</b> {dec_icon}\n\n"
+                    f"🤖 <b>HEMISFERIO INTELIGENCIA ARTIFICIAL</b>\n"
+                    f"  Régimen de Mercado (HMM): <b>{hmm_regime}</b>\n"
+                    f"  Proyección Alcista (LSTM): {lstm_bar} <b>{lstm_prob}%</b>\n"
                     f"{'═'*22}\n"
-                    f"{dec_icon} <b>DECISIÓN: {decision}</b>\n"
-                    f"<i>BUY &gt;60 | SELL &lt;40 | WAIT en el medio</i>"
+                    f"<i>Para ejecutar entrada: LSTM debe coincidir con Señal. (>55% Buy / <45% Sell)</i>"
                 )
                 self.send_message(msg)
 
