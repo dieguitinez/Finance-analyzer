@@ -371,7 +371,7 @@ if __name__ == "__main__":
             pair = symbol.replace("_", "/")
             
             engine = DataEngine(oanda_config={"token": _token, "account_id": _account})
-            df = engine.fetch_data(pair, "1h")
+            df = engine.fetch_data(pair, "1h", count=200)
             brain = NivoTradeBrain(df)
             analysis = brain.analyze_market()
             cortex = NivoCortex(data=df, oanda_token=_token, oanda_id=_account, pair=pair)
