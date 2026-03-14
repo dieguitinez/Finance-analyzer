@@ -16,9 +16,9 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 # Import Nivo suite components
-from src.data_engine import DataEngine
+from src.data_engine import DataEngine, FundamentalEngine
 from src.notifications import NotificationManager
-from src.utils import FundamentalEngine, is_market_open
+from src.utils import is_market_open
 from src.auto_execution import NivoAutoTrader
 from src.nivo_trade_brain import NivoTradeBrain
 from src.nivo_cortex import NivoCortex
