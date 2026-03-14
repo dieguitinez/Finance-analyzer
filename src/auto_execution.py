@@ -26,6 +26,7 @@ class NivoAutoTrader:
         self.capital_at_risk_per_trade = 0.01  # 1% per trade
         self.starting_daily_balance: float = 0.0
         self.min_signal_strength = 60  # The "Trigger" percentage
+        self.last_order_id = None
         
     def check_daily_kill_switch(self):
         """Layer 3: Check if we hit the daily drawdown limit."""
@@ -169,15 +170,46 @@ class NivoAutoTrader:
             return {"status": "error", "message": f"Already have an open position for {instrument}"}
 
         try:
-            # Dynamic Precision based on instrument type (JPY pairs = 3 decimals, Others = 5 decimals)
-            decimals = 3 if "JPY" in instrument else 5
+            # 1. Fetch Current Pricing to check Spread (Safety First)
+            pricing_res = self.ctx.pricing.get(self.account_id, instruments=instrument)
+            if pricing_res.status != 200:
+                return {"status": "error", "message": f"Could not fetch pricing for spread check: {pricing_res.status}"}
             
-            # Ensure price string formatting matches OANDA exact requirements (e.g. '1.14000' not '1.14')
-            sl_price_str = f"{float(stop_loss_price):.{decimals}f}"
+            price_obj = pricing_res.get("prices")[0]
+            curr_ask = float(price_obj.closeoutAsk)
+            curr_bid = float(price_obj.closeoutBid)
+            spread = abs(curr_ask - curr_bid)
+            entry_price = curr_ask if int(units) > 0 else curr_bid
             
-            # Use the exact trailing stop distance prescribed by the executor engine 
-            # (which already guarantees TS distance < Hard SL distance based on live ticks).
+            # 2. Verify Stop Loss distance vs Spread
+            # OANDA requires SL to be outside the spread. 
+            # We enforce a buffer (Spread * 1.5 or at least 2 pips)
+            decimals = 3 if "JPY" in instrument or "XAU" in instrument else 5
+            pip_value = 0.01 if "JPY" in instrument or "XAU" in instrument else 0.0001
+            min_buffer = max(spread * 1.5, pip_value * 2.0)
+            
+            sl_distance = abs(entry_price - float(stop_loss_price))
+            
+            actual_sl_price = float(stop_loss_price)
+            if sl_distance < min_buffer:
+                # Adjust SL to a safe distance
+                if int(units) > 0: # Buy
+                    actual_sl_price = entry_price - min_buffer
+                else: # Sell
+                    actual_sl_price = entry_price + min_buffer
+                
+                logger.warning(f"⚠️ [SL ADJUST] SL distance ({sl_distance:.{decimals}f}) < spread buffer ({min_buffer:.{decimals}f}). Adjusted SL to {actual_sl_price:.{decimals}f}")
+
+            # 3. Dynamic Precision based on instrument type
+            sl_price_str = f"{float(actual_sl_price):.{decimals}f}"
+            
+            # Ensure safe trailing stop distance
             safe_trailing_dist = abs(float(trailing_stop_distance))
+            # Trailing stop must also be >= spread (usually)
+            if safe_trailing_dist < min_buffer:
+                safe_trailing_dist = min_buffer
+                logger.warning(f"⚠️ [TS ADJUST] TS distance ({trailing_stop_distance}) < spread buffer. Adjusted to {safe_trailing_dist:.{decimals}f}")
+            
             ts_dist_str = f"{safe_trailing_dist:.{decimals}f}"
             
             # Prepare Order with Layer 1 (Stop Loss) and Layer 2 (Trailing Stop)
@@ -193,17 +225,16 @@ class NivoAutoTrader:
             # DEBUG: Show raw response status
             print(f"[DEBUG] OANDA Status: {response.status}")
             
-            # OANDA returns 201 for Created, but the order might not be Filled (it might be Cancelled)
             if response.status != 201:
                 return {"status": "error", "message": getattr(response, "errorMessage", f"HTTP {response.status}")}
             
-            # Accessing from response.body directly for absolute dictionary-key precision
             body = getattr(response, "body", {})
             
             # 1. Check for Filling
             fill = body.get("orderFillTransaction")
             if fill:
-                return {"status": "success", "order_id": fill.id if hasattr(fill, "id") else getattr(fill, "id", "UnknownID")}
+                self.last_order_id = fill.id if hasattr(fill, "id") else getattr(fill, "id", "UnknownID")
+                return {"status": "success", "order_id": self.last_order_id}
             
             # 2. Check for Immediate Cancellation
             cancel = body.get("orderCancelTransaction")

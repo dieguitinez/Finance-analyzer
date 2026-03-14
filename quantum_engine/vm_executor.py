@@ -1,144 +1,110 @@
 import os
-import sys
-import gc
+import time
+import requests
 import json
 import logging
-import requests
-from datetime import datetime
-import numpy as np
+from logging.handlers import RotatingFileHandler
 import pandas as pd
+import numpy as np
+import sys
+from datetime import datetime
 from dotenv import load_dotenv
 
-# Ensure project root is importable (works both locally and on Linux server)
+# Ensure project root is importable
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-# Import Quantum Modules
-from src.data_engine import DataEngine, FundamentalEngine
+# Import Nivo suite components
+from src.data_engine import DataEngine
 from src.notifications import NotificationManager
-from src.utils import is_market_open
+from src.utils import FundamentalEngine, is_market_open
 from src.auto_execution import NivoAutoTrader
 from src.nivo_trade_brain import NivoTradeBrain
-from src.nivo_cortex import NivoCortex  # Right Hemisphere: HMM + LSTM + DOM Veto
+from src.nivo_cortex import NivoCortex
 
-# ============================================================
-# HYBRID SYSTEM EXECUTOR v3.0
-# ----------------------------
-# This executor uses the HYBRID NivoTradeBrain which enforces
-# TWO sequential gates before emitting a BUY/SELL signal:
-#
-#  Gate 1 (trigger):   Donchian 50 breakout (from backup_donchian_stable)
-#  Gate 2 (validator): Legacy weighted score >75% conviction
-#                      (MACD + RSI + ADX + EMA200, from backup_legacy_strategy)
-#
-# Only if BOTH gates pass does vm_executor receive a real signal.
-# The AI (LSTM/News) below acts as a final safety net on top.
-# ============================================================
+# --- SETUP PERSISTENT LOGGING V4 ---
+_log_dir = os.path.join(_project_root, "logs")
+if not os.path.exists(_log_dir):
+    os.makedirs(_log_dir, exist_ok=True)
 
-# Configure Headless Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | NIVO EXECUTION LOG: [%(levelname)s] | %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+_log_file = os.path.join(_log_dir, "nivo_fx.log")
+_handler = RotatingFileHandler(_log_file, maxBytes=5*1024*1024, backupCount=7)
+_formatter = logging.Formatter('%(asctime)s | NIVO EXECUTOR: [%(levelname)s] | %(message)s')
+_handler.setFormatter(_formatter)
+
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(_handler)
+# Add stream handler for real-time visibility
+_stream_handler = logging.StreamHandler(sys.stdout)
+_stream_handler.setFormatter(_formatter)
+logger.addHandler(_stream_handler)
 
-def execute_oanda_safe_trade(instrument: str, units: int, action: str, stop_loss: float, trailing_stop: float = 0.0020):
+def record_decision(pair, signal, hmm_regime, lstm_prob, sentiment, dom, order_id="N/A", reason=""):
     """
-    Routes trade through NivoAutoTrader to enforce the 3-Layer Risk Protocol.
-    Includes EMERGENCY KILL SWITCH check.
+    Appends a bot decision to the persistent Trade Ledger.
     """
-    # 0. Emergency Panic Button Check (Persistent Lock File)
-    lock_file = os.path.join(_project_root, ".panic_lock")
-    if os.path.exists(lock_file):
-        logger.warning(f"🛑 [EMERGENCY KILL SWITCH ACTIVATED] 🛑 Found .panic_lock. Dropping {action} order for {instrument}. Autotrading is completely halted.")
-        return False
-        
-    # Also check legacy env var for backward compatibility
-    kill_switch = os.getenv("EMERGENCY_KILL_SWITCH", "False").lower() == "true"
-        
-    api_key = os.getenv("OANDA_ACCESS_TOKEN")
-    account_id = os.getenv("OANDA_ACCOUNT_ID")
-    env = "practice" if "practice" in os.getenv("OANDA_BASE_URL", "practice") else "live"
-
-    if not api_key or not account_id:
-        logger.error("🛑 CRITICAL: OANDA API Credentials missing. Halting.")
-        return False
-
-    trader = NivoAutoTrader(api_key, account_id, environment=env)
+    import csv
+    _ledger_path = os.path.join(_log_dir, "trade_ledger.csv")
+    _file_exists = os.path.exists(_ledger_path)
     
-    logger.info(f"🚀 [SAFE EXECUTION] Routing {action} for {instrument} | Units: {units} | SL: {stop_loss} | TS: {trailing_stop}")
-    
-    result = trader.execute_trade(
-        instrument=instrument,
-        units=units if action == "BUY" else -abs(units),
-        stop_loss_price=stop_loss,
-        trailing_stop_distance=trailing_stop
-    )
-    
-    if result.get("status") == "success":
-        order_id = result.get('order_id')
-        logger.info(f"✅ Trade successful. Order ID: {order_id}")
-        
-        # Enviar confirmacion final a Telegram
-        tg_token  = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        tg_chat   = os.getenv("TELEGRAM_CHAT_ID", "")
-        if tg_token and tg_chat:
-            NotificationManager.trade_execution_report(
-                pair=instrument.replace("_", "/"),
-                action=action,
-                units=units,
-                order_id=order_id,
-                token=tg_token,
-                chat_id=tg_chat
-            )
-        return True
-    else:
-        msg = result.get('message', 'Unknown Error')
-        if "Already have an open position" in msg:
-            logger.info(f"⏭️  {msg} - Skipping entry.")
-        else:
-            logger.error(f"❌ Execution failed: {msg}")
-        return False
+    try:
+        with open(_ledger_path, "a", newline="") as f:
+            _writer = csv.writer(f)
+            if not _file_exists:
+                _writer.writerow(["Timestamp", "Pair", "Signal", "HMM_Regime", "LSTM_Prob", "Sentiment", "DOM", "Order_ID", "Reason"])
+            _writer.writerow([
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                pair, signal, hmm_regime, f"{float(lstm_prob):.2f}", 
+                sentiment, dom, order_id, reason
+            ])
+    except Exception as e:
+        logger.error(f"Failed to record in ledger: {e}")
 
-def run_headless_cycle():
+def run_headless_cycle(pairs_list: list = None):
     """
-    Main execution pipeline strictly shaped for 1GB RAM constraint.
+    Main Loop for the Quant V4 Hybrid Strategy.
+    Orchestrates Technicals, HMM Regimes, LSTM Probability, and News Sentiment.
     """
     if not is_market_open():
-        logger.warning("Market is CLOSED. Execution aborted for safety.")
+        logger.warning("Mercado Cerrado (Fin de Semana). Ejecución abortada por seguridad.")
         return False
         
-    logger.info("Initializing Quantum Computation Cycle...")
-    
-    # 1. Environment Security & Kill Switch
     load_dotenv()
     
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    panic_lock_path = os.path.join(project_root, ".panic_lock")
-    if os.path.exists(panic_lock_path):
-        logger.warning("🚨 [KILL SWITCH] .panic_lock detected in VM Executor. Halting execution.")
+    if pairs_list is None:
+        target_env = os.getenv("TRADING_PAIR", "EUR_USD")
+        pairs_list = [p.strip() for p in target_env.split(",") if p.strip()]
+
+    if not pairs_list:
+        logger.warning("No se especificaron pares. Ciclo abortado.")
         return False
 
-    # Memory Scope Pre-allocation for explicit GC tracking
-    df = None
-    df = None
-    guardian_reason = ""
-        
-    try:
-        # ---------------------------------------------------------------
-        # GLOBAL POSITION GUARD (CRITICAL FIX)
-        # Check ENTIRE account for ANY open position before doing anything.
-        # ---------------------------------------------------------------
-        _token = os.getenv("OANDA_ACCESS_TOKEN", "")
-        _account = os.getenv("OANDA_ACCOUNT_ID", "")
-        _base_url = os.getenv("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
-        _tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        _tg_chat  = os.getenv("TELEGRAM_CHAT_ID", "")
-        _pos_cache_path = "/tmp/nivo_open_positions.json"
+    logger.info(f"Iniciando ciclo de computación cuántica para: {', '.join(pairs_list)}")
+    
+    panic_lock_path = os.path.join(_project_root, ".panic_lock")
+    if os.path.exists(panic_lock_path):
+        logger.warning("🚨 [KILL SWITCH] .panic_lock detectado. Abortando ejecución.")
+        return False
+
+    # Check for global environment once
+    _token = os.getenv("OANDA_ACCESS_TOKEN", "")
+    _account = os.getenv("OANDA_ACCOUNT_ID", "")
+    _base_url = os.getenv("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
+    _tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    _tg_chat  = os.getenv("TELEGRAM_CHAT_ID", "")
+
+    for oanda_symbol in pairs_list:
+        pair = oanda_symbol.replace("_", "/")
+        logger.info(f"\n--- Procesando Par: {pair} ---")
         
         try:
+            # Check open positions once per iteration
+            _temp_dir = os.path.join(_project_root, "temp")
+            if not os.path.exists(_temp_dir): os.makedirs(_temp_dir, exist_ok=True)
+            _pos_cache_path = os.path.join(_temp_dir, "nivo_open_positions.json")
+        
             _r = requests.get(
                 f"{_base_url}/v3/accounts/{_account}/openPositions",
                 headers={"Authorization": f"Bearer {_token}"},
@@ -146,214 +112,92 @@ def run_headless_cycle():
             )
             _open_positions = _r.json().get("positions", [])
             _open_instruments = [p["instrument"] for p in _open_positions]
-            if _open_instruments:
-                _pos_summary = ", ".join(_open_instruments)
-                logger.info(f"📊 POSICIONES ABIERTAS: [{_pos_summary}]")
-
-            # Snapshot logic for Trailing Stop close detection
-            if os.path.exists(_pos_cache_path):
-                try:
-                    with open(_pos_cache_path, "r") as f:
-                        _prev_cache = json.loads(f.read())
-                    _closed_by_ts = set(_prev_cache.keys()) - set(_open_instruments)
-                    for _closed_pair in _closed_by_ts:
-                        _prev = _prev_cache[_closed_pair]
-                        logger.info(f"[TS CLOSE DETECTED] {_closed_pair} closed.")
-                        NotificationManager.trailing_stop_close_report(
-                            pair=_closed_pair.replace("_", "/"),
-                            units=_prev.get("units", 0),
-                            entry_price=_prev.get("entry_price", 0.0),
-                            close_price=_prev.get("current_price", 0.0),
-                            pnl_usd=_prev.get("pnl_usd", 0.0),
-                            pips=_prev.get("pips", 0.0),
-                            token=_tg_token,
-                            chat_id=_tg_chat
-                        )
-                except: pass
-
-            _pos_snapshot = {}
-            for _pos in _open_positions:
-                _instr = _pos["instrument"]
-                _long_u = float(_pos.get("long", {}).get("units", 0))
-                _short_u = float(_pos.get("short", {}).get("units", 0))
-                _units = _long_u if _long_u != 0 else _short_u
+            
+            # 2. Main Analysis Logic
+            tf = "1h"
+            engine = DataEngine(oanda_config={"token": _token, "account_id": _account})
+            df = engine.fetch_data(pair, tf)
+            
+            if df is None or df.empty:
+                logger.warning(f"Sin datos para {pair}.")
+                continue
                 
-                # Fetch deeper position details for accurate Trailing Stop reporting
-                _side_data = _pos.get("long", {}) if _long_u != 0 else _pos.get("short", {})
-                _entry_price = float(_side_data.get("averagePrice", 0.0))
-                _unrealized_pl = float(_pos.get("unrealizedPL", 0.0))
-                
-                _pos_snapshot[_instr] = {
-                    "units": _units,
-                    "entry_price": _entry_price,
-                    "pnl_usd": _unrealized_pl
-                }
-            with open(_pos_cache_path, "w") as f:
-                f.write(json.dumps(_pos_snapshot))
-
-        except Exception as _guard_err:
-            _open_instruments = []
-            logger.warning(f"⚠️ Global Guard check failed: {_guard_err}")
-
-        # 2. Main Analysis Logic
-        oanda_symbol = os.getenv("TRADING_PAIR", "EUR_USD")
-        pair = oanda_symbol.replace("_", "/")
-        tf = "1h"
-        
-        oanda_cfg = {"token": _token, "account_id": _account}
-        engine = DataEngine(oanda_config=oanda_cfg)
-        df = engine.fetch_data(pair, tf)
-        
-        if df is None or df.empty:
-            logger.warning("No data retrieved.")
-            return False
+            brain = NivoTradeBrain(df)
+            brain_analysis = brain.analyze_market()
+            cortex = NivoCortex(data=df, oanda_token=_token, oanda_id=_account, pair=pair)
             
-        brain = NivoTradeBrain(df)
-        brain_analysis = brain.analyze_market()
-        
-        cortex = NivoCortex(data=df, oanda_token=_token, oanda_id=_account, pair=pair)
-        # We consolidate HMM and LSTM calls into the Cortex Veto handshake
-        
-        is_vetoed, veto_reason = cortex.evaluate_veto(df)
-        # Extraemos la probabilidad del LSTM que el Cortex ya calculó internamente
-        _, lstm_prob = cortex.lstm.predict_next_move(df)
+            hmm_id, hmm_lbl = cortex.hmm.detect_regime(df)
+            _, lstm_prob = cortex.lstm.predict_next_move(df)
+            is_vetoed, veto_reason = cortex.evaluate_veto(df)
 
-        if is_vetoed:
-            logger.info(f"🛑 CORTEX VETO: {veto_reason}")
-            return False
+            if is_vetoed:
+                logger.info(f"🛑 CORTEX VETO para {pair}: {veto_reason}")
+                record_decision(pair, "WAIT", hmm_lbl, lstm_prob, 0, "N/A", reason=f"VETO: {veto_reason}")
+                continue
 
-        # -------------------------------------------------------------
-        # 3. CONVICTION LAYER (TREND + AI + NEWS)
-        # -------------------------------------------------------------
-        raw_signal = brain_analysis.get("signal", "WAIT")
-        
-        # Fundamental News Sentiment
-        news_items, sentiment_score = FundamentalEngine.get_pair_sentiment(pair)
-        
-        # Calculate ATR fallback if needed
-        atr_value = brain_analysis.get("atr", None)
-        if not atr_value or pd.isna(atr_value):
-            atr_value = df['High'].iloc[-14:].mean() - df['Low'].iloc[-14:].mean()
-        
-        # Order Book Analysis (Micro-sentiment)
-        dom_analysis = cortex.analyze_order_book(oanda_symbol)
-        dom_outlook = dom_analysis.get("outlook", "Neutral")
-        
-        oanda_env = os.getenv("OANDA_ENVIRONMENT", "practice")
-        trader = NivoAutoTrader(_token, _account, environment=oanda_env)
-
-        if oanda_symbol in _open_instruments:
-            logger.info(f"⏭️ {oanda_symbol} already open. Skipping entry.")
-        elif raw_signal in ("BUY", "SELL"):
-            # ================================================================
-            # HYBRID FINAL SAFETY LAYER
-            # Note: The signal from brain.analyze_market() has ALREADY passed
-            # the Donchian 50 trigger AND the Legacy 75% conviction gate.
-            # This layer adds the final AI + News veto on top of that.
-            # ================================================================
-
-            # 1. AI Confirmation: Neural net must show real directional conviction
-            ai_agreement = (raw_signal == "BUY" and lstm_prob >= 55) or (raw_signal == "SELL" and lstm_prob <= 45)
-
-            # 2. News Confirmation: Macro sentiment must support the direction
-            news_agreement = (raw_signal == "BUY" and sentiment_score >= 52) or (raw_signal == "SELL" and sentiment_score <= 48)
-
-            if not ai_agreement:
-                logger.info(f"🛡️ [HYBRID VETO] IA: LSTM conviction {lstm_prob:.2f}% insufficient. Need >55% (BUY) or <45% (SELL). Trade CANCELLED.")
-                return False
-
-            if not news_agreement:
-                logger.info(f"🛡️ [HYBRID VETO] NEWS: Sentiment {sentiment_score} is mixed or opposing. Need >=52 (BUY) or <=48 (SELL). Trade CANCELLED.")
-                return False
-
-            # ================================================================
-            # MACRO CORRELATION LAYER (DXY Filter)
-            # ================================================================
-            if "USD" in pair:
-                dxy_df = engine.fetch_dxy_data()
-                if dxy_df is not None and not dxy_df.empty:
-                    dxy_df['EMA50'] = dxy_df['Close'].ewm(span=50, adjust=False).mean()
-                    dxy_bullish = dxy_df['Close'].iloc[-1] > dxy_df['EMA50'].iloc[-1]
-                    
-                    base_currency, quote_currency = pair.split('/')
-                    usd_veto = False
-                    dxy_reason = ""
-                    
-                    if raw_signal == "BUY":
-                        if quote_currency == "USD" and dxy_bullish: # e.g. Buy EUR/USD requires weak USD
-                            usd_veto = True
-                            dxy_reason = "Buying Base vs USD, but USD is Bullish"
-                        elif base_currency == "USD" and not dxy_bullish: # e.g. Buy USD/JPY requires strong USD
-                            usd_veto = True
-                            dxy_reason = "Buying USD vs Quote, but USD is Bearish"
-                    elif raw_signal == "SELL":
-                        if quote_currency == "USD" and not dxy_bullish: # e.g. Sell EUR/USD requires strong USD
-                            usd_veto = True
-                            dxy_reason = "Selling Base vs USD, but USD is Bearish"
-                        elif base_currency == "USD" and dxy_bullish: # e.g. Sell USD/JPY requires weak USD
-                            usd_veto = True
-                            dxy_reason = "Selling USD vs Quote, but USD is Bullish"
-                            
-                    if usd_veto:
-                        logger.info(f"🛡️ [MACRO VETO] DXY Filter: {dxy_reason}. Trade CANCELLED.")
-                        return False
-
-            logger.info(f"🔥 [HYBRID FULL CONVICTION] Donchian✅ + Legacy✅ + LSTM:{lstm_prob:.1f}%✅ + News:{sentiment_score}✅ + DOM:{dom_outlook}. Executing...")
+            raw_signal = brain_analysis.get("signal", "WAIT")
+            _, sentiment_score = FundamentalEngine.get_pair_sentiment(pair)
             
-            sl_distance_pips = (atr_value * 2.0) * (100 if "JPY" in pair else 10000)
-            units = trader.calculate_position_size(oanda_symbol, sl_distance_pips)
-            if units <= 0: units = 1000 
-            
-            trade_units = units if raw_signal == "BUY" else -abs(units)
-            
+            # Cache for Telegram Report
             try:
-                _pricing_r = requests.get(
-                    f"https://{trader.hostname}/v3/accounts/{trader.account_id}/pricing?instruments={oanda_symbol}",
-                    headers={"Authorization": f"Bearer {trader.token}"},
-                    timeout=5
-                )
-                _price_data = _pricing_r.json().get("prices", [{}])[0]
-                _ask = float(_price_data.get("asks", [{}])[0].get("price", df['Close'].iloc[-1]))
-                _bid = float(_price_data.get("bids", [{}])[0].get("price", df['Close'].iloc[-1]))
-                
-                sl_distance_price = atr_value * 2.0
-                ts_distance_price = atr_value * 1.5
-                
-                sl_price = (_bid - sl_distance_price) if raw_signal == "BUY" else (_ask + sl_distance_price)
-                
-                logger.info(f"[LIVE EXECUTION] {raw_signal} | SL:{sl_price:.5f} | Units: {abs(trade_units)}")
-                
-                trader.execute_trade(
-                    instrument=oanda_symbol,
-                    units=trade_units,
-                    stop_loss_price=sl_price,
-                    trailing_stop_distance=ts_distance_price
-                )
-                
-                if _tg_token and _tg_chat:
-                    news_msg = f"Sentiment: {sentiment_score}"
-                    NotificationManager.trade_signal_alert(
-                        pair=pair, signal=raw_signal, score=int(sentiment_score),
-                        weight=1.0, direction=lstm_prob, 
-                        guardian_msg=f"Triple Check: Trend+AI+News ✅. Sentiment: {sentiment_score} | DOM: {dom_outlook}",
-                        token=_tg_token, chat_id=_tg_chat
-                    )
-            except Exception as _e:
-                logger.error(f"Execution Error: {_e}")
-        else:
-            logger.info(f"💤 [HYBRID] [{oanda_symbol}] Cycle complete. No signal (Brain: {raw_signal} | Reason: Donchian or Legacy gate not cleared).")  
+                report_data = {
+                    "pair": pair,
+                    "price": round(float(df['Close'].iloc[-1]), 5),
+                    "brain_signal": raw_signal,
+                    "hmm_regime": hmm_lbl,
+                    "lstm_prob": round(float(lstm_prob), 2),
+                    "gemini_sentiment": sentiment_score,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                with open(os.path.join(_temp_dir, f"nivo_report_cache_{oanda_symbol}.json"), "w") as f:
+                    json.dump(report_data, f)
+            except: pass
 
-    except Exception as e:
-        logger.error(f"VM Cycle Error: {str(e)}", exc_info=True)
-        try:
-            from src.self_healer import NivoSelfHealer
-            NivoSelfHealer.diagnose_and_alert(component="QuantumCore.VMExecutor", error_msg="Crash in VM cycle", exception_obj=e)
-        except: pass
-    finally:
-        try:
-            from quantum_engine.nivo_memory import release_memory
-            release_memory(logger=logger)
-        except: pass
+            atr_value = brain_analysis.get("atr", None)
+            if not atr_value or pd.isna(atr_value):
+                atr_value = df['High'].iloc[-14:].mean() - df['Low'].iloc[-14:].mean()
+            
+            dom_analysis = cortex.analyze_order_book(oanda_symbol)
+            dom_outlook = dom_analysis.get("outlook", "Neutral")
+            
+            trader = NivoAutoTrader(_token, _account, environment="practice" if "practice" in _base_url else "live")
+
+            if oanda_symbol in _open_instruments:
+                logger.info(f"⏭️ {oanda_symbol} ya abierta. Saltando.")
+            elif raw_signal in ("BUY", "SELL"):
+                # HYBRID FINAL SAFETY LAYER
+                ai_agreement = (raw_signal == "BUY" and lstm_prob >= 55) or (raw_signal == "SELL" and lstm_prob <= 45)
+                news_agreement = (raw_signal == "BUY" and sentiment_score >= 52) or (raw_signal == "SELL" and sentiment_score <= 48)
+
+                if not (ai_agreement and news_agreement):
+                    logger.info(f"🛡️ [HYBRID VETO] IA:{ai_agreement} | NEWS:{news_agreement}. Señal abortada para {pair}.")
+                    record_decision(pair, "WAIT", hmm_lbl, lstm_prob, sentiment_score, dom_outlook, reason="Veto Híbrido")
+                    continue
+
+                logger.info(f"🔥 [HYBRID CONVICTION] {pair} Ejecutando entrada...")
+                try:
+                    sl_dist = (atr_value * 2.0) * (100 if "JPY" in pair else 10000)
+                    units = trader.calculate_position_size(oanda_symbol, sl_dist)
+                    trade_units = units if raw_signal == "BUY" else -abs(units)
+                    sl_price = (float(df['Close'].iloc[-1]) - (atr_value * 2.0)) if raw_signal == "BUY" else (float(df['Close'].iloc[-1]) + (atr_value * 2.0))
+                    
+                    trader.execute_trade(instrument=oanda_symbol, units=trade_units, stop_loss_price=sl_price, trailing_stop_distance=atr_value * 1.5)
+                    
+                    if _tg_token and _tg_chat:
+                        NotificationManager.trade_signal_alert(pair=pair, signal=raw_signal, score=int(sentiment_score), weight=1.0, direction=lstm_prob, 
+                                                               guardian_msg=f"Trend+AI+News ✅. DOM:{dom_outlook}", token=_tg_token, chat_id=_tg_chat)
+                    
+                    record_decision(pair, raw_signal, hmm_lbl, lstm_prob, sentiment_score, dom_outlook, order_id=getattr(trader, 'last_order_id', "EXECUTED"))
+                except Exception as ex:
+                    logger.error(f"Error en ejecución para {pair}: {ex}")
+
+        except Exception as e:
+            logger.error(f"Error en ciclo VM para {pair}: {str(e)}", exc_info=True)
+
+    try:
+        from quantum_engine.nivo_memory import release_memory
+        release_memory(logger=logger)
+    except: pass
 
 if __name__ == "__main__":
     import argparse
@@ -362,30 +206,23 @@ if __name__ == "__main__":
     args, _ = parser.parse_known_args()
 
     if args.diagnostic:
-        # Mini diagnostic script
         try:
             load_dotenv()
-            _token = os.getenv("OANDA_ACCESS_TOKEN")
-            _account = os.getenv("OANDA_ACCOUNT_ID")
-            symbol = os.getenv("TRADING_PAIR", "EUR_USD")
-            pair = symbol.replace("_", "/")
-            
-            engine = DataEngine(oanda_config={"token": _token, "account_id": _account})
-            df = engine.fetch_data(pair, "1h")
-            if df is not None and not df.empty:
-                df = df.tail(200)
-            brain = NivoTradeBrain(df)
-            analysis = brain.analyze_market()
-            cortex = NivoCortex(data=df, oanda_token=_token, oanda_id=_account, pair=pair)
-            hmm_id, hmm_lbl = cortex.hmm.detect_regime(df)
-            _, lstm_p = cortex.lstm.predict_next_move(df)
-            
+            _t = os.getenv("OANDA_ACCESS_TOKEN")
+            _a = os.getenv("OANDA_ACCOUNT_ID")
+            s = os.getenv("TRADING_PAIR", "EUR_USD")
+            p = s.replace("_", "/")
+            e = DataEngine(oanda_config={"token": _t, "account_id": _a})
+            d = e.fetch_data(p, "1h")
+            br = NivoTradeBrain(d)
+            an = br.analyze_market()
+            cx = NivoCortex(data=d, oanda_token=_t, oanda_id=_a, pair=p)
+            hi, hl = cx.hmm.detect_regime(d)
+            _, lp = cx.lstm.predict_next_move(d)
+            _, fs = FundamentalEngine.get_pair_sentiment(p)
             print(json.dumps({
-                "pair": pair,
-                "price": round(float(df['Close'].iloc[-1]), 5),
-                "brain_signal": analysis.get("signal"),
-                "hmm_regime": hmm_lbl,
-                "lstm_prob": round(lstm_p, 2)
+                "pair": p, "price": round(float(d['Close'].iloc[-1]), 5), "signal": an.get("signal"),
+                "hmm": hl, "lstm": round(float(lp), 2), "news": fs
             }))
         except Exception as e:
             print(json.dumps({"error": str(e)}))

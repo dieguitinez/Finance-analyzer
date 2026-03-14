@@ -128,13 +128,13 @@ class NivoStockWatcher:
         self._save_pdt_tracker()
         self.logger.info(f"[PDT] Compra registrada: {symbol} @ {today}")
 
-    def is_pdt_safe_to_sell(self, symbol: str) -> bool:
+    def is_pdt_safe_to_sell(self, symbol: str, is_emergency: bool = False) -> bool:
         """
         Intelligent PDT Protection:
         1. Si se compró ayer o antes, es seguro vender (no gasta count).
-        2. Si se compró HOY, es un Day Trade. Verificamos la API de Alpaca.
-        3. Si Alpaca reporta < 3 day trades, PERMITIMOS la venta.
-        4. Si reporta >= 3, BLOQUEAMOS para proteger la cuenta.
+        2. Si se compró HOY:
+           - Si no es una emergencia, BLOQUEAMOS para conservar los 3 tokens (Hold overnight).
+           - Si es emergencia, gastamos un token (si quedan disponibles).
         """
         purchase_date_str = self._pdt_tracker.get(symbol)
         
@@ -149,30 +149,47 @@ class NivoStockWatcher:
             return True  # Fue comprado ayer o antes, vender no cuenta como day trade
 
         # --- ES UN DAY TRADE (Comprado HOY) ---
+        if not is_emergency:
+            self.logger.info(f"⏳ [PDT GUARD] {symbol} comprado hoy. Retenido hasta mañana para no gastar token PDT en operaciones normales.")
+            return False
+
+        # --- ES UN DAY TRADE (Comprado HOY) ---
         try:
-            account = self.trading_client.get_account()
-            dt_count = int(account.daytrade_count)
+            # Recuperar historial local de day trades
+            dt_history = self._pdt_tracker.get("__dt_history__", [])
+            from datetime import timedelta
+            
+            # Retroceder exactamente 5 días hábiles
+            business_days_counted = 0
+            start_date = today
+            while business_days_counted < 5:
+                if start_date.weekday() < 5:  # 0=Lun, ..., 4=Vie
+                    business_days_counted += 1
+                start_date -= timedelta(days=1)
+                
+            recent_dts = [d for d in dt_history if date.fromisoformat(d) > start_date]
+            
+            # Autolimpiar vieja historia
+            self._pdt_tracker["__dt_history__"] = recent_dts
+            self._save_pdt_tracker()
+            
+            dt_count = len(recent_dts)
             
             if dt_count < 3:
+                # Ejecutamos el trade, sumar al tracker local
+                self._pdt_tracker["__dt_history__"].append(today.isoformat())
+                self._save_pdt_tracker()
+                
                 self.logger.info(
                     f"[PDT GUARD] ⚠️ TOKEN DAY TRADE USADO para {symbol}. "
-                    f"Fueron consumidos {dt_count}/3."
-                )
-                # Opcional: Avisar por Telegram si se está usando un "token" de day trade
-                self.notifier.send_critical_alert(
-                    f"⚠️ <b>Token Day Trade Usado: {symbol}</b>\n"
-                    f"Llevamos {dt_count}/3 day trades en los últimos 5 días."
+                    f"Fueron consumidos {dt_count + 1}/3 (Locales)."
                 )
                 return True
             else:
                 self.logger.warning(
                     f"[PDT GUARD] ❌ VENTA BLOQUEADA para {symbol}: "
-                    f"MÁXIMO PDT ALCANZADO ({dt_count}/3). "
+                    f"MÁXIMO PDT ALCANZADO ({dt_count}/3 locales). "
                     f"La venta se pospone para mañana."
-                )
-                self.notifier.send_critical_alert(
-                    f"❌ <b>Venta Bloqueada por Regla PDT: {symbol}</b>\n"
-                    f"La cuenta ya tiene {dt_count}/3 day trades. Se retendrá hasta mañana."
                 )
                 return False
                 

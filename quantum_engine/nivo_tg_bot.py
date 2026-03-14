@@ -35,6 +35,7 @@ class NivoTelegramBot:
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.api_url = f"https://api.telegram.org/bot{self.token}"
         self.last_update_id = 0
+        self.callback_cooldowns = {} # Rate limiting
         
         # OANDA Setup
         self.api_key = os.getenv("OANDA_ACCESS_TOKEN")
@@ -249,48 +250,33 @@ class NivoTelegramBot:
                     self.send_message(f"❌ Error: {e}")
                 return
 
-            self.send_message(f"🔬 Diagnóstico para <b>{requested_raw.replace('_','/')}</b>... ⏳ ~15s")
+            self.send_message(f"⚡ Buscando diagnóstico cuántico de <b>{requested_raw.replace('_','/')}</b> en caché rápida...")
 
             try:
-                import subprocess
                 import json
-                import copy
+                import os
 
-                env = copy.copy(os.environ)
-                env["TRADING_PAIR"] = requested_raw
-
-                vm_path = os.path.join(_project_root, "quantum_engine", "vm_executor.py")
-                result = subprocess.run(
-                    ["python3", vm_path, "--diagnostic"],
-                    capture_output=True, text=True, timeout=35, env=env,
-                    cwd=_project_root
-                )
-
-                json_line = None
-                for line in reversed(result.stdout.strip().split("\n")):
-                    if line.strip().startswith("{"):
-                        json_line = line.strip()
-                        break
-
-                if not json_line:
-                    self.send_message(f"❌ Sin reporte JSON.\n<code>{result.stderr[-300:]}</code>")
+                _temp_dir = os.path.join(_project_root, "temp")
+                cache_file = os.path.join(_temp_dir, f"nivo_report_cache_{requested_raw}.json")
+                if not os.path.exists(cache_file):
+                    self.send_message(f"❌ Aún no hay datos cacheados para {requested_raw.replace('_','/')}. El Sentinel lo escaneará en su próximo ciclo de 15 minutos.")
                     return
-
-                d = json.loads(json_line)
-                if "error" in d:
-                    self.send_message(f"❌ Error en diagnóstico: {d['error']}")
-                    return
+                
+                with open(cache_file, "r") as f:
+                    d = json.load(f)
 
                 pair_display = d.get("pair", requested_raw.replace("_", "/"))
                 price = d.get("price", "N/A")
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+                ts = d.get("timestamp", "Fecha desconocida")
                 
                 brain_signal = d.get("brain_signal", "WAIT")
                 hmm_regime = d.get("hmm_regime", "N/A")
                 lstm_prob = float(d.get("lstm_prob", 50.0))
+                fund_score = float(d.get("gemini_sentiment", 50.0))
 
                 dec_icon = "📈" if brain_signal == "BUY" else "📉" if brain_signal == "SELL" else "⏸"
                 lstm_bar  = "🟢" if lstm_prob >= 55 else "🔴" if lstm_prob <= 45 else "🟡"
+                fund_bar  = "🟢" if fund_score >= 52 else "🔴" if fund_score <= 48 else "🟡"
                 
                 msg = (
                     f"🔬 <b>DIAGNÓSTICO V4 — {pair_display}</b>\n"
@@ -301,13 +287,13 @@ class NivoTelegramBot:
                     f"🤖 <b>HEMISFERIO INTELIGENCIA ARTIFICIAL</b>\n"
                     f"  Régimen de Mercado (HMM): <b>{hmm_regime}</b>\n"
                     f"  Proyección Alcista (LSTM): {lstm_bar} <b>{lstm_prob}%</b>\n"
+                    f"📰 <b>SENTIMIENTO INSTITUCIONAL (Gemini V5)</b>\n"
+                    f"  Macro-Outlook: {fund_bar} <b>{fund_score}</b>/100\n"
                     f"{'═'*22}\n"
                     f"<i>Para ejecutar entrada: LSTM debe coincidir con Señal. (>55% Buy / <45% Sell)</i>"
                 )
                 self.send_message(msg)
 
-            except subprocess.TimeoutExpired:
-                self.send_message("⏱️ Timeout: diagnóstico tardó más de 35s.")
             except Exception as e:
                 self.send_message(f"❌ Error: {e}")
 
@@ -402,8 +388,23 @@ class NivoTelegramBot:
                         except Exception:
                             pass
 
+
                         # Security: only authorized chat
                         if user_id == self.chat_id:
+                            # Rate limiting check
+                            now = time.time()
+                            last_click = self.callback_cooldowns.get(user_id, 0)
+                            if now - last_click < 3: # 3 second cooldown
+                                try:
+                                    requests.post(
+                                        f"{self.api_url}/answerCallbackQuery",
+                                        json={"callback_query_id": cq_id, "text": "⏳ Cooldown activo..."},
+                                        timeout=5
+                                    )
+                                except: pass
+                                continue
+                            
+                            self.callback_cooldowns[user_id] = now
                             if callback_data == "panic_cancel":
                                 if "message" in cq and "message_id" in cq["message"]:
                                     self.delete_message(cq["message"]["message_id"])

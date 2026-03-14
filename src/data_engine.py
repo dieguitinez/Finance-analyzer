@@ -3,7 +3,8 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import feedparser
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from src.notifications import NotificationManager
 
 class DataEngine:
@@ -162,18 +163,25 @@ class DataEngine:
 
 class FundamentalEngine:
     """
-    Nivo Fundamental Intelligence Layer.
+    Nivo Fundamental Intelligence Layer (V5).
     Fetches real-time institutional news flow via RSS and calculates
-    NLP sentiment scores for specific currency pairs.
+    NLP sentiment scores using the Gemini API cascade (Profile 1).
     """
+
+    # Nivo Architecture Exhaustive Cascade (Profile 1: High Frequency)
+    MODEL_CASCADE = [
+        'gemini-2.0-flash-lite',
+        'gemini-2.0-flash-lite-001',
+        'gemini-2.5-flash-lite',
+        'gemini-flash-lite-latest'
+    ]
     
     @staticmethod
     def get_pair_sentiment(pair_name):
         """
-        Fetches RSS news from Yahoo Finance for a specific pair and 
-        returns (news_items, average_sentiment_0_to_100).
+        Fetches RSS news for a specific pair and uses Gemini to 
+        calculate an institutional sentiment score (0 to 100).
         """
-        analyzer = SentimentIntensityAnalyzer()
         symbol = DataEngine.get_symbol_map(pair_name)
         # Combine Yahoo Finance and MarketPulse (OANDA) for higher quality
         rss_urls = [
@@ -187,42 +195,94 @@ class FundamentalEngine:
                 feed = feedparser.parse(rss_url)
                 all_entries.extend(feed.entries)
             
-            news_items = []
-            total_vader_score = 0
-            
-            # Use max 20 recent headlines (Expanded from 10 + MarketPulse)
-            entries = all_entries[:20]
+            # Use max 15 recent headlines to conserve token context and increase speed
+            entries = all_entries[:15]
             if not entries:
-                print(f"[FundamentalEngine] ⚠️ Zero headlines for {pair_name}. RSS feeds may be down. Using neutral 50.0")
+                print(f"[FundamentalEngine] WARNING: Zero headlines for {pair_name}. RSS feeds may be down. Using neutral 50.0")
                 return [], 50.0
-                
-            for entry in entries:
-                # Vader compound score is between -1.0 and 1.0
-                compound_score = analyzer.polarity_scores(entry.title)['compound']
-                total_vader_score += compound_score
+
+            news_items = []
+            headlines_text = ""
+            for i, entry in enumerate(entries):
+                headlines_text += f"{i+1}. {entry.title}\n"
                 news_items.append({
                     'title': entry.title, 
                     'link': entry.link, 
-                    'score': compound_score
+                    'score': 0  # Replaced by global Gemini score below
                 })
             
-            avg_compound = total_vader_score / len(entries)
+            # Prepare Gemini request
+            api_key = os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                print("[FundamentalEngine] WARNING: GOOGLE_API_KEY missing. Returning neutral 50.0")
+                return news_items, 50.0
+
+            genai.configure(api_key=api_key)
             
-            # Map -1.0..1.0 to 0..100 scale for QuantumBridge compatibility
-            final_score = (avg_compound + 1.0) * 50.0
+            prompt = f"""
+            You are a senior institutional FX trader. Analyze the following recent news headlines related to the currency pair {pair_name}.
             
-            print(f"Fundamental Analysis: Found {len(news_items)} headlines for {pair_name}. Sentiment Score: {final_score:.2f}")
+            Headlines:
+            {headlines_text}
             
+            Task:
+            Evaluate the overall fundamental sentiment for the base currency in {pair_name} based on these headlines.
+            Output ONLY a single floating-point number between 0.0 and 100.0, where:
+            - 0.0 is extremely bearish (panic sell base currency)
+            - 50.0 is completely neutral or mixed
+            - 100.0 is extremely bullish (conviction buy base currency)
+            
+            Output nothing else. No explanation. Just the number.
+            """
+
+            final_score = 50.0
+            success = False
+            
+            for model_name in FundamentalEngine.MODEL_CASCADE:
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    # We configure safety settings to NONE as financial news can trigger violence filters ("markets crushed")
+                    response = model.generate_content(
+                        prompt,
+                        safety_settings={
+                            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                        }
+                    )
+                    
+                    if response.text:
+                        score_str = response.text.replace('```', '').strip()
+                        final_score = float(score_str)
+                        # Clamp the score between 0 and 100
+                        final_score = max(0.0, min(100.0, final_score))
+                        print(f"[FundamentalEngine] Gemini Consensus ({model_name}) for {pair_name}: {final_score}")
+                        success = True
+                        break # Stop cascading on success
+                        
+                except Exception as cascade_e:
+                    print(f"[FundamentalEngine] WARNING: Model {model_name} failed: {cascade_e}. Falling back...")
+                    continue
+                    
+            if not success:
+               print(f"[FundamentalEngine] ERROR: All models in the Profile 1 cascade failed. Using neutral 50.0")
+               
+            # Update individual items for UI compatibility (so dashboards mapping -1 to 1 still work somewhat)
+            legacy_mapping = (final_score - 50.0) / 50.0
+            for item in news_items:
+                item['score'] = legacy_mapping
+                
             return news_items, round(final_score, 2)
             
         except Exception as e:
             from src.self_healer import NivoSelfHealer
-            print(f"Fundamental Analysis Error for {pair_name}: {e}")
+            print(f"[FundamentalEngine] Critical Error for {pair_name}: {e}")
             
             NivoSelfHealer.diagnose_and_alert(
                 component="FundamentalEngine.Sentiment",
-                error_msg=f"Error obteniendo noticias/sentimiento para {pair_name}",
+                error_msg=f"Error obteniendo sentimiento con Gemini IA para {pair_name}",
                 exception_obj=e,
                 context_data={"pair": pair_name}
             )
-            return [], 50.0 # Return neutral sentiment on failure
+            return [], 50.0

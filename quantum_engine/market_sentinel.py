@@ -4,6 +4,7 @@ import time
 import requests
 import json
 import logging
+import logging.handlers
 import subprocess
 
 # Ensure the project root is on the path so 'src' is importable
@@ -15,11 +16,19 @@ if _project_root not in sys.path:
 from src.notifications import NotificationManager
 from src.utils import is_market_open
 
-# Nivo FX Sentinel Logging
+# Nivo FX Sentinel Logging with Rotation (7 days)
+log_dir = os.path.join(_project_root, "logs")
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir, exist_ok=True)
+
+log_file = os.path.join(log_dir, "nivo_sentinel.log")
+handler = logging.handlers.RotatingFileHandler(log_file, maxBytes=2*1024*1024, backupCount=7)
+formatter = logging.Formatter('%(asctime)s | NIVO SENTINEL: [%(levelname)s] | %(message)s')
+handler.setFormatter(formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s | NIVO SENTINEL: [%(levelname)s] | %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[handler, logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
@@ -216,9 +225,10 @@ def run_sentinel():
     
     # 2. Evaluate Trigger Conditions for all pairs (Memory footprint < 20MB)
     for pair in watchlist:
-        if check_volatility_expansion(pair=pair):
-            triggered_pairs.append(pair)
-            
+        # User requested to remove RAM limitations and force scanning on all cycles.
+        # check_volatility_expansion(...) bypassed to guarantee full AI analysis.
+        logger.info(f"RAM limit removed. Forcing full AI Quantum Scan for {pair}.")
+        triggered_pairs.append(pair)
     # --- NEW: Automated Tracking of Open Positions ---
     # We ensure that if there's a trade open, it always gets a report regardless of volatility
     active_positions = get_active_positions()
@@ -227,11 +237,11 @@ def run_sentinel():
             logger.info(f"📋 Seguimiento Automático: Posición abierta detectada para {pos_pair}. Activando reporte.")
             triggered_pairs.append(pos_pair)
             
-    # 3. Process Branching
+    # 3. Process Branching (Optimized: Single Process for all pairs)
     if triggered_pairs:
-        for pair in triggered_pairs:
-            awake_vm_executor(pair=pair)
-            time.sleep(2) # Give OS a moment between heavy spawns if multiple trigger
+        # Join pairs with commas to pass to the executor
+        pairs_str = ",".join(triggered_pairs)
+        awake_vm_executor(pair=pairs_str)
     else:
         logger.info("Mercado tranquilo. Volatilidad bajo el umbral en todos los pares. Liberando RAM.")
         

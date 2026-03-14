@@ -28,6 +28,7 @@ class NivoStockBot:
         self.chat_id  = str(os.getenv("STOCK_TELEGRAM_CHAT_ID", "")).strip()
         self.api_url  = f"https://api.telegram.org/bot{self.token}"
         self.last_update_id = 0
+        self.callback_cooldowns = {} # Rate limiting
 
         if not self.token or not self.chat_id:
             logger.error("❌ STOCK_TELEGRAM_BOT_TOKEN or STOCK_TELEGRAM_CHAT_ID missing in ai_stock_sentinel/.env")
@@ -141,11 +142,27 @@ class NivoStockBot:
                 if not positions:
                     self.send_message("✅ <b>Portfolio Limpio.</b> No hay acciones en cartera.")
                     return
+                    
+                # Tracker para saber las fechas de compra reales sin saturar la API
+                pdt_tracker = {}
+                try:
+                    import json
+                    pdt_file = "/tmp/nivo_stock_pdt_tracker.json"
+                    if os.path.exists(pdt_file):
+                        with open(pdt_file, "r") as f:
+                            pdt_tracker = json.load(f)
+                except Exception:
+                    pass
+
                 msg = "📝 <b>Posiciones Abiertas:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
                 for pos in positions:
                     side    = "🟢" if float(pos.qty) > 0 else "🔴"
                     pnl_pct = float(pos.unrealized_plpc) * 100
-                    msg    += f"{side} <b>{pos.symbol}</b>: {pos.qty} acciones | {pnl_pct:+.2f}%\n"
+                    
+                    purchase_date_str = pdt_tracker.get(pos.symbol)
+                    date_info = f" | 📅 {purchase_date_str}" if purchase_date_str else " | 📅 N/A"
+                    
+                    msg    += f"{side} <b>{pos.symbol}</b>: {pos.qty} acc | {pnl_pct:+.2f}%{date_info}\n"
                 msg += "━━━━━━━━━━━━━━━━━━━━"
                 self.send_message(msg)
             except Exception as e:
@@ -257,14 +274,25 @@ class NivoStockBot:
                     try:
                         purchase_date = date.fromisoformat(purchase_date_str)
                         if purchase_date >= today:
-                            # Comprado HOY - Consultar contador de Day Trades en Alpaca
+                            # Comprado HOY - Consultar contador de Day Trades local (strict simulation)
                             try:
-                                account = self.trading_client.get_account()
-                                dt_count = int(account.daytrade_count)
+                                dt_history = pdt_tracker.get("__dt_history__", [])
+                                from datetime import timedelta
+                                
+                                business_days_counted = 0
+                                start_date = today
+                                while business_days_counted < 5:
+                                    if start_date.weekday() < 5:  # 0=Lun, ..., 4=Vie
+                                        business_days_counted += 1
+                                    start_date -= timedelta(days=1)
+                                    
+                                recent_dts = [d for d in dt_history if date.fromisoformat(d) > start_date]
+                                
+                                dt_count = len(recent_dts)
                                 if dt_count >= 3:
-                                    is_safe = False # Bloqueado, reached PDT limit
+                                    is_safe = False # Bloqueado, reached PDT limit local
                             except Exception as e:
-                                logger.error(f"Error checking daytrade_count in panic: {e}")
+                                logger.error(f"Error checking local daytrade history in panic: {e}")
                                 is_safe = False # Falla segura (bloquear)
                     except Exception:
                         pass
@@ -272,6 +300,20 @@ class NivoStockBot:
                 if is_safe:
                     self.trading_client.close_position(symbol_or_asset_id=pos.symbol)
                     closed += 1
+                    
+                    # Registrar el gasto de token PDT si se compró hoy
+                    if purchase_date_str:
+                        try:
+                            if date.fromisoformat(purchase_date_str) == today:
+                                dt_history = pdt_tracker.get("__dt_history__", [])
+                                dt_history.append(today.isoformat())
+                                pdt_tracker["__dt_history__"] = dt_history
+                                import json
+                                with open("/tmp/nivo_stock_pdt_tracker.json", "w") as f:
+                                    json.dump(pdt_tracker, f)
+                        except Exception as e:
+                            logger.error(f"Error guardando token PDT post-panic para {pos.symbol}: {e}")
+
                 else:
                     kept += 1
                     kept_symbols.append(pos.symbol)
@@ -296,6 +338,17 @@ class NivoStockBot:
         
         if self.chat_id and sender_id != self.chat_id:
             return  # Unauthorized
+
+        # Rate limiting check (3 second cooldown)
+        now = time.time()
+        last_click = self.callback_cooldowns.get(sender_id, 0)
+        if now - last_click < 3:
+            # We don't send a message here because it might spam the chat even more,
+            # but we answer the callback query to clear the spinner.
+            # Usually handled in poll_updates, but good for defense-in-depth here.
+            return
+
+        self.callback_cooldowns[sender_id] = now
 
         if data == "panic_cancel":
             if msg_id:
