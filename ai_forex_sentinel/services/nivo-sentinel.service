@@ -1,0 +1,17 @@
+[Unit]
+Description=Nivo FX Sentinel Engine (Market Watcher)
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/home/diego/nivo_fx/ai_forex_sentinel/.env
+User=diego
+WorkingDirectory=/home/diego/nivo_fx/ai_forex_sentinel/
+Environment="PATH=/home/diego/nivo_fx/.venv/bin"
+Environment="PYTHONPATH=/home/diego/nivo_fx/ai_forex_sentinel"
+Environment="LOKY_MAX_CPU_COUNT=1"
+Environment="JOBLIB_MULTIPROCESSING=0"
+ExecStart=/home/diego/nivo_fx/.venv/bin/python quantum_engine/market_sentinel.py
+
+[Install]
+WantedBy=multi-user.target

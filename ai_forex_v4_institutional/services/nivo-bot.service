@@ -1,0 +1,16 @@
+[Unit]
+Description=Nivo FX Telegram Bot (Command Interface)
+After=network.target
+
+[Service]
+EnvironmentFile=/home/diego/nivo_fx/ai_forex_sentinel/.env
+User=diego
+WorkingDirectory=/home/diego/nivo_fx/ai_forex_sentinel/
+Environment="PATH=/home/diego/nivo_fx/.venv/bin"
+Environment="PYTHONPATH=/home/diego/nivo_fx/ai_forex_sentinel"
+ExecStart=/home/diego/nivo_fx/.venv/bin/python ai_forex_sentinel/quantum_engine/nivo_tg_bot.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

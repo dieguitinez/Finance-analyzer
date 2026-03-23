@@ -1,0 +1,18 @@
+[Unit]
+Description=Nivo AI Stock V2 Telegram Bot
+After=network.target
+
+[Service]
+EnvironmentFile=/home/diego/nivo_fx/ai_stock_v2_institutional/.env
+User=diego
+WorkingDirectory=/home/diego/nivo_fx/ai_stock_v2_institutional/
+Environment="PATH=/home/diego/nivo_fx/.venv/bin"
+Environment="PYTHONPATH=/home/diego/nivo_fx/ai_stock_v2_institutional"
+# Kill any stale instances before starting to prevent Telegram 409 conflicts
+ExecStartPre=-/usr/bin/pkill -f ai_stock_v2_institutional/stock_tg_bot.py
+ExecStart=/home/diego/nivo_fx/.venv/bin/python stock_tg_bot.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

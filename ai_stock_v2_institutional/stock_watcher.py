@@ -33,22 +33,25 @@ except ImportError:
 
 import yfinance as yf
 
-# Cargar configuración aislada
-load_dotenv('ai_stock_sentinel/.env')
+# Cargar configuración aislada — usar ruta absoluta para que funcione
+# correctamente tanto como script directo como desde systemd service.
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(_BASE_DIR, '.env'))
 
 # ─── PDT GUARD CONSTANTS ─────────────────────────────────────────────────────
 # Archivo persistente para rastrear fechas de compra por símbolo
 _PDT_TRACKER_FILE = "/tmp/nivo_stock_pdt_tracker.json"
 
 # ─── SECTOR HEALTH CONSTANTS ──────────────────────────────────────────────────
-# SOXX = iShares Semiconductor ETF. QQQ = Nasdaq 100
+# SOXX = iShares Semiconductor ETF. SPY = S&P 500
 _SOXX_SYMBOL         = "SOXX"
 _QQQ_SYMBOL          = "QQQ"
+_SPY_SYMBOL          = "SPY"
 _SECTOR_BEAR_THRESHOLD = -3.0   # Si SOXX baja más de 3% en el día → Cash mode
 _MARKET_BEAR_THRESHOLD = -1.5   # Si QQQ baja más de 1.5% en el día → Cash mode
 
-# Sanctuary Assets (Gold, Utilities) to pivot to when tech collapses
-_SANCTUARY_SYMBOLS = ["GLD", "XLU"]
+# Sanctuary Assets (Gold, Utilities, Bonds) to pivot to when tech collapses
+_SANCTUARY_SYMBOLS = ["GLD", "XLU", "TLT"]
 
 # ─── EARNINGS CALENDAR API ───────────────────────────────────────────────────
 _EARNINGS_CACHE_FILE = "/tmp/nivo_earnings_cache.json"
@@ -57,7 +60,7 @@ _EARNINGS_CACHE_FILE = "/tmp/nivo_earnings_cache.json"
 class NivoStockWatcher:
     def __init__(self):
         # 🛡️ Configuración de Logs (Rotación Automática para evitar llenar el disco)
-        log_file = 'ai_stock_sentinel/sentinel.log'
+        log_file = 'sentinel.log'
         self.logger = logging.getLogger("StockSentinel")
         self.logger.setLevel(logging.INFO)
         if not self.logger.handlers:
@@ -96,10 +99,10 @@ class NivoStockWatcher:
         self._positions_cache_file = "/tmp/nivo_stock_positions_cache.json"
         self._positions_cache = self._load_positions_cache()
 
-        self.logger.info(f"🚀 Nivo AI Stock Sentinel iniciado. Modo paper: {self.is_paper}")
-        self.logger.info(f"📡 Monitoreando {len(self.watchlist)} activos: {self.watchlist}")
-        self.logger.info(f"🤖 Autónomo: {'SÍ' if self.autonomous_mode else 'NO (Solo Alertas)'}")
-        self.logger.info(f"💰 Capital por trade: ${self._capital_per_trade}")
+        self.logger.info(f"[INIT] Nivo AI Stock Sentinel iniciado. Modo paper: {self.is_paper}")
+        self.logger.info(f"[WATCHLIST] Monitoreando {len(self.watchlist)} activos: {self.watchlist}")
+        self.logger.info(f"[MODE] Autónomo: {'SÍ' if self.autonomous_mode else 'NO (Solo Alertas)'}")
+        self.logger.info(f"[CAPITAL] Capital por trade: ${self._capital_per_trade}")
 
     # ─── PDT PROTECTION ───────────────────────────────────────────────────────
 
@@ -195,13 +198,13 @@ class NivoStockWatcher:
                 self._save_pdt_tracker()
                 
                 self.logger.info(
-                    f"[PDT GUARD] ⚠️ TOKEN DAY TRADE USADO para {symbol}. "
+                    f"[PDT GUARD] [WARN] TOKEN DAY TRADE USADO para {symbol}. "
                     f"Fueron consumidos {int(dt_count) + 1}/3 (Locales)."
                 )
                 return True
             else:
                 self.logger.warning(
-                    f"[PDT GUARD] ❌ VENTA BLOQUEADA para {symbol}: "
+                    f"[PDT GUARD] [FAIL] VENTA BLOQUEADA para {symbol}: "
                     f"MÁXIMO PDT ALCANZADO ({dt_count}/3 locales). "
                     f"La venta se pospone para mañana."
                 )
@@ -268,7 +271,7 @@ class NivoStockWatcher:
             pass
 
         if earnings_symbols:
-            self.logger.info(f"[EARNINGS] 📅 Reportes en las próximas 48h: {earnings_symbols}")
+            self.logger.info(f"[EARNINGS] [CALENDAR] Reportes en las próximas 48h: {earnings_symbols}")
 
         return earnings_symbols
 
@@ -288,7 +291,7 @@ class NivoStockWatcher:
         """Retorna True si el símbolo tiene earnings hoy o mañana."""
         earnings = self._get_earnings_today_and_tomorrow()
         if symbol in earnings:
-            self.logger.warning(f"[EARNINGS GUARD] ⚠️ {symbol} tiene reporte en <48h. Entrada bloqueada.")
+            self.logger.warning(f"[EARNINGS GUARD] [WARN] {symbol} tiene reporte en <48h. Entrada bloqueada.")
             return True
         return False
 
@@ -325,10 +328,10 @@ class NivoStockWatcher:
                     current_price = float(soxx_quote.ask_price or soxx_quote.bid_price)
                     daily_change_pct = ((current_price - prev_close) / prev_close) * 100
                     if daily_change_pct <= _SECTOR_BEAR_THRESHOLD:
-                        self.logger.warning(f"[SECTOR GUARD] 🔴 SOXX cayó {daily_change_pct:.2f}% hoy. Activando ROTACIÓN DE SECTOR.")
+                        self.logger.warning(f"[SECTOR GUARD] [BEAR] SOXX cayó {daily_change_pct:.2f}% hoy. Activando ROTACIÓN DE SECTOR.")
                         self.notifier.send_critical_alert(f"SOXX cayó {daily_change_pct:.2f}% hoy.\n<b>Activando Rotación a ETFs Refugio ({', '.join(_SANCTUARY_SYMBOLS)}).</b>")
                         return False
-                    self.logger.info(f"[SECTOR] ✅ SOXX: {daily_change_pct:+.2f}%")
+                    self.logger.info(f"[SECTOR] [OK] SOXX: {daily_change_pct:+.2f}%")
 
             # Chequeo QQQ
             if not bars.df.empty and _QQQ_SYMBOL in bars.df.index.levels[0]:
@@ -338,10 +341,10 @@ class NivoStockWatcher:
                     current_price = float(qqq_quote.ask_price or qqq_quote.bid_price)
                     daily_change_pct = ((current_price - prev_close) / prev_close) * 100
                     if daily_change_pct <= _MARKET_BEAR_THRESHOLD:
-                        self.logger.warning(f"[MARKET GUARD] 🔴 QQQ cayó {daily_change_pct:.2f}% hoy. Activando ROTACIÓN DE SECTOR.")
+                        self.logger.warning(f"[MARKET GUARD] [BEAR] QQQ cayó {daily_change_pct:.2f}% hoy. Activando ROTACIÓN DE SECTOR.")
                         self.notifier.send_critical_alert(f"QQQ cayó {daily_change_pct:.2f}% hoy.\n<b>Activando Rotación a ETFs Refugio ({', '.join(_SANCTUARY_SYMBOLS)}).</b>")
                         return False
-                    self.logger.info(f"[MARKET] ✅ QQQ: {daily_change_pct:+.2f}%")
+                    self.logger.info(f"[MARKET] [OK] QQQ: {daily_change_pct:+.2f}%")
 
             return True
 
@@ -517,8 +520,7 @@ class NivoStockWatcher:
         """Escanea 24/7 con todos los filtros de seguridad activados."""
         
         # ─── PANIC SWITCH CHECK (Integrado con Telegram Bot) ───────────────
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        panic_lock_path = os.path.join(project_root, ".panic_lock")
+        panic_lock_path = ".panic_lock"
         if os.path.exists(panic_lock_path):
             self.logger.warning("🛑 [PANIC SWITCH ACTIVO] El scanner está bloqueado por orden del usuario (.panic_lock). Use /resume en Telegram para restaurar.")
             return
@@ -552,11 +554,32 @@ class NivoStockWatcher:
         # ─── EARNINGS CALENDAR (cache compartido para todos los símbolos) ───
         earnings_risk_set = self._get_earnings_today_and_tomorrow()
 
-        # ─── MAESTRO LOGIC: Sector Health Snapshot ──────────────────────────
+        # ─── MAESTRO LOGIC: Sector Health & Correlation Context ──────────────
         sector_change = self._get_daily_change_pct(_SOXX_SYMBOL)
         market_change = self._get_daily_change_pct(_QQQ_SYMBOL)
         
-        # Si el mercado está en pánico extremo, aún rotamos a refugio (pero con bypass individual luego)
+        # V2: Calcular Fuerza Relativa del Sector (SOXX vs SPY)
+        soxx_df = self.get_historical_data(_SOXX_SYMBOL)
+        spy_df = self.get_historical_data(_SPY_SYMBOL)
+        strength_score, strength_label = self.cerebro.get_sector_strength(soxx_df, spy_df)
+        
+        # V2: Detectar Sesgo de Líderes (TSM, ASML)
+        tsm_change = self._get_daily_change_pct("TSM")
+        asml_change = self._get_daily_change_pct("ASML")
+        leaders_bias = "NEUTRAL"
+        if tsm_change > 0.5 and asml_change > 0.5:
+            leaders_bias = "BULLISH"
+        elif tsm_change < -0.5 and asml_change < -0.5:
+            leaders_bias = "BEARISH"
+            
+        sector_context = {
+            'strength_score': strength_score,
+            'strength_label': strength_label,
+            'leaders_bias': leaders_bias
+        }
+        
+        self.logger.info(f"📊 CONTEXTO: SOXX vs SPY: {strength_score:+.2f}% ({strength_label}) | Bias Líderes: {leaders_bias}")
+
         if sector_change <= _SECTOR_BEAR_THRESHOLD or market_change <= _MARKET_BEAR_THRESHOLD:
             if session_type == "LIVE":
                 self.logger.info(f"🔴 Mercado bajista ({sector_change:+.2f}%). Rotando a activos refugio.")
@@ -571,7 +594,7 @@ class NivoStockWatcher:
                     self.logger.warning(f"⚠️ No hay datos para {symbol}. Saltando...")
                     continue
                 current_price = float(df['close'].iloc[-1])
-                signal, signal_reason = self.cerebro.analyze_momentum(df, symbol)
+                signal, signal_reason = self.cerebro.analyze_momentum(df, symbol, sector_context)
                 
                 if signal:
                     # ✅ MAESTRO CALCULATION: Relative Strength & Whale Bypass
@@ -600,33 +623,51 @@ class NivoStockWatcher:
                 if session_type == "LIVE" and self.executor.has_open_position(symbol):
                     if self.is_pdt_safe_to_sell(symbol):
                         if not self.executor.has_pending_orders(symbol):
-                            self.logger.info(f"🛡️ Posición {symbol} en Día 2 sin escudo. Activando OCO.")
+                            self.logger.info(f"[SHIELD] Posición {symbol} en Día 2 sin escudo. Activando OCO.")
                             sl_price = float(round(float(current_price) * 0.98, 2))
                             tp_price = float(round(float(current_price) * 1.05, 2))
                             if self.autonomous_mode:
                                 self.executor.place_oco_shield(symbol, tp_price=tp_price, sl_price=sl_price)
-                                # OCO shield is automatic maintenance — no Telegram needed
                                 self.logger.info(f"[OCO] Escudo Día 2 activado: {symbol} | TP:{tp_price} | SL:{sl_price}")
                     else:
-                        self.logger.info(f"⏳ {symbol}: Posición en Día 1. Reteniendo Brackets por regla PDT.")
+                        self.logger.info(f"[TIME] {symbol}: Posición en Día 1. Reteniendo Brackets por regla PDT.")
 
-                # Ensure side is correct
-                side = OrderSide.BUY if signal == "BUY" else OrderSide.SELL
+                # USER OVERRIDE: NO SHORT SELLING
+                if signal == "SELL":
+                    if not self.executor.has_open_position(symbol):
+                        self.logger.debug(f"🛑 [NO SHORTS] Señal SHORT bloqueada para {symbol}. Solo operamos LONG.")
+                        signal = None
+
+                if not signal:
+                    continue  # No valid signal — skip order phase for this symbol
+
+                # ─── PDT CHECK para ventas LIVE ─────────────────────────────
+                if signal == "SELL" and not self.is_pdt_safe_to_sell(symbol):
+                    self.logger.info(f"🛡️ [PDT GUARD] Ignorando señal de VENTA para {symbol} por regla PDT.")
+                    continue
 
                 # ─── PDT HYBRID SHIELD ─────────────────────────────────────
-                # Envíamos la orden "Nuda" (sin bracket) el Día 1 para evitar 
+                # Enviamos la orden "Nuda" (sin bracket) el Día 1 para evitar
                 # cierres del broker que violen la regla PDT.
                 sl_price = None
                 tp_price = None
-
+                side = OrderSide.BUY if signal == "BUY" else OrderSide.SELL
                 notional = self._get_notional_per_trade()
 
                 if session_type == "LIVE":
                     if self.autonomous_mode:
-                        result = self.executor.place_safe_order(
-                            symbol, qty=None, notional=notional,
-                            side=side, tp_price=tp_price, sl_price=sl_price
-                        )
+                        if side == OrderSide.SELL:
+                            self.logger.info(f"Liquidando posición completa de {symbol}...")
+                            try:
+                                result = self.executor.client.close_position(symbol)
+                            except Exception as e:
+                                self.logger.error(f"Error cerrando posición {symbol}: {e}")
+                                result = None
+                        else:
+                            result = self.executor.place_safe_order(
+                                symbol, qty=None, notional=notional,
+                                side=side, tp_price=tp_price, sl_price=sl_price
+                            )
                         if result:
                             # ✅ ENTRY NOTIFICATION — the main Telegram alert
                             self.notifier.send_trade_open(
@@ -709,7 +750,8 @@ class NivoStockWatcher:
                 # Re-validate: is the signal still valid at 10:00 AM?
                 df = self.get_historical_data(symbol)
                 current_price = df['close'].iloc[-1]
-                signal, signal_reason = self.cerebro.analyze_momentum(df, symbol)
+                # En Trigger también pasamos contexto pero es menos relevante que en LIVE
+                signal, signal_reason = self.cerebro.analyze_momentum(df, symbol, sector_context=None)
 
                 # USER OVERRIDE: NO SHORT SELLING
                 if signal == "SELL":
@@ -729,9 +771,8 @@ class NivoStockWatcher:
                     continue  # Bloqueado por PDT
 
                 # ─── EXISTING POSITION GUARD ─────────────────────────────────
-                if self.executor.has_open_position(symbol) or self.executor.has_pending_orders(symbol):
-                    if expected_signal == "BUY":
-                        self.logger.info(f"[Queue] 🛡️ Posición ya abierta en {symbol}. Omitiendo nueva compra.")
+                if expected_signal == "BUY" and (self.executor.has_open_position(symbol) or self.executor.has_pending_orders(symbol)):
+                    self.logger.info(f"[Queue] 🛡️ Posición ya abierta en {symbol}. Omitiendo nueva compra.")
                     continue
 
                 # ─── PDT HYBRID SHIELD ─────────────────────────────────────
@@ -740,10 +781,18 @@ class NivoStockWatcher:
                 side = OrderSide.BUY if expected_signal == "BUY" else OrderSide.SELL
 
                 notional = item.get("notional", self._capital_per_trade)
-                result = self.executor.place_safe_order(
-                    symbol, qty=None, notional=notional,
-                    side=side, tp_price=tp_price, sl_price=sl_price
-                )
+                if side == OrderSide.SELL:
+                    self.logger.info(f"[Queue] Liquidando posición completa de {symbol}...")
+                    try:
+                        result = self.executor.client.close_position(symbol)
+                    except Exception as e:
+                        self.logger.error(f"Error cerrando posición {symbol}: {e}")
+                        result = None
+                else:
+                    result = self.executor.place_safe_order(
+                        symbol, qty=None, notional=notional,
+                        side=side, tp_price=tp_price, sl_price=sl_price
+                    )
 
                 if result:
                     # ✅ ENTRY NOTIFICATION for queue execution at 10 AM
@@ -786,7 +835,3 @@ if __name__ == "__main__":
     watcher = NivoStockWatcher()
     watcher.run()
 
-
-if __name__ == "__main__":
-    watcher = NivoStockWatcher()
-    watcher.run()

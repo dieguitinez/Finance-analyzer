@@ -1,0 +1,16 @@
+streamlit
+yfinance>=0.2.51
+pandas
+numpy
+plotly
+feedparser
+vaderSentiment
+twilio
+v20
+oandapyV20
+google-genai
+PyYAML
+requests
+python-dotenv
+psutil
+alpaca-py

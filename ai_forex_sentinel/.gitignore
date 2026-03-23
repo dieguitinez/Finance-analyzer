@@ -1,0 +1,54 @@
+# Python
+.venv/
+venv/
+env/
+bin/
+lib/
+share/
+include/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment variables
+.env
+.env.*
+
+# Streamlit
+.streamlit/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Deployment
+*.tar.gz
+notebooklmcontext/
+"archivos contexto para agente/"
+
+# Backups and Context Documentation
+backup_*/
+*.md
+
+# Nivo FX Cleanup (Local/System stuff)
+.agent/
+tmp/
+venv~/
+nohup.out
+*.log
