@@ -1,3 +1,8 @@
+import os
+import sys
+# Fix sys.path so the root app.py can resolve modular imports from the production folder
+sys.path.append(os.path.join(os.path.dirname(__file__), 'ai_forex_sentinel'))
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,7 +13,6 @@ import feedparser
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import datetime
 import time
-import os
 import warnings
 
 import concurrent.futures
